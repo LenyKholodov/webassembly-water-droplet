@@ -6,7 +6,7 @@ LINK_FLAGS += $(MEDIA_FILES:%=--embed-file "%")
 INCLUDE_DIRS := include
 CC_FLAGS := -std=c++17 -O3 ${INCLUDE_DIRS:%=-I%}
 TMP_DIR := tmp
-SRCS := $(wildcard src/**/*.cpp) $(wildcard src/**/*.c) $(wildcard src/*.cpp) $(wildcard src/*.c)
+SRCS := $(wildcard src/**/*.cpp) $(wildcard src/**/**/*.cpp) $(wildcard src/**/*.c) $(wildcard src/*.cpp) $(wildcard src/*.c)
 OBJS := $(patsubst %.cpp,$(TMP_DIR)/%.o,$(SRCS))
 
 all: build

@@ -1,14 +1,26 @@
+#include <scene/camera.h>
+#include <scene/mesh.h>
+#include <scene/light.h>
+#include <render/scene_render.h>
+#include <media/image.h>
+#include <scene/camera.h>
+#include <scene/node.h>
+#include <scene/light.h>
+#include <scene/mesh.h>
+#include <scene/projectile.h>
 #include <application/application.h>
 #include <application/window.h>
 #include <common/exception.h>
 #include <common/log.h>
 #include <common/component.h>
 #include <math/utility.h>
-#include <media/image.h>
 
 using namespace engine::common;
+using namespace engine::render::scene;
+using namespace engine::render::low_level;
+using namespace engine::scene;
 using namespace engine::application;
-using namespace engine::media::image;
+using namespace engine::scene;
 using namespace engine;
 
 //////
@@ -100,11 +112,13 @@ int main(void)
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);
     glfwMakeContextCurrent(window.handle());
-#ifdef __EMSCRIPTEN__
-#else
-    gladLoadGL();
-#endif
-    glfwSwapInterval(1);
+
+      //render setup
+
+    DeviceOptions render_options;
+    Device render_renderer(window, render_options);
+
+    //glfwSwapInterval(1);
     // NOTE: OpenGL error checks have been omitted for brevity
     GLuint vertex_buffer;
     glGenBuffers(1, &vertex_buffer);
