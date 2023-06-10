@@ -1,8 +1,12 @@
 #shader vertex
+#ifndef GL_ES
 #version 410 core
+in vec3 vPosition;
+#else
+uniform vec3 vPosition;
+#endif
 
 uniform mat4 MVP;
-in vec3 vPosition;
 
 void main()
 {
@@ -10,7 +14,9 @@ void main()
 }
 
 #shader pixel
+#ifndef GL_ES
 #version 410 core
+#endif
 
 void main()
 {

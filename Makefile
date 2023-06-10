@@ -13,7 +13,7 @@ all: build
 
 build: $(TARGET)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(MEDIA_FILES)
 	@echo Linking $(notdir $@)...
 	@emcc $(LINK_FLAGS) $(OBJS) -o $@
 

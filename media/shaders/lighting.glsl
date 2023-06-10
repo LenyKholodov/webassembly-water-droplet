@@ -1,11 +1,20 @@
 //TODO optimize
 
 #shader vertex
+
+#ifndef GL_ES
 #version 410 core
 
 in vec3 vPosition;
 in vec2 vTexCoord;
 out vec2 texCoord;
+#else
+precision mediump float;
+
+uniform vec3 vPosition;
+uniform vec2 vTexCoord;
+varying vec2 texCoord;
+#endif
 
 void main()
 {
@@ -14,7 +23,18 @@ void main()
 }
 
 #shader pixel
+
+#ifndef GL_ES
 #version 410 core
+in vec2 texCoord;
+out vec4 outColor;
+#else
+precision mediump float;
+varying vec2 texCoord;
+#define outColor gl_FragColor
+#define texture texture2D
+#endif
+
 #define DEBUG 0
 
 uniform sampler2D positionTexture;
@@ -23,13 +43,10 @@ uniform sampler2D albedoTexture;
 uniform sampler2D specularTexture;
 uniform sampler2D shadowTexture;
 
-in vec2 texCoord;
-out vec4 outColor;
-
 const float MIN_DIFFUSE_AMOUNT = 0.1; // ambient light
 const float DIFFUSE_AMOUNT = 1.0; // diffuse light multiplier
 const float SPECULAR_AMOUNT = 1.0; // specular light multiplier
-const float SHININESS_NORMALIZER = 1000.0f; // workaround for RGBA8 precision for shininess
+const float SHININESS_NORMALIZER = 1000.0; // workaround for RGBA8 precision for shininess
 
 #define MAX_POINT_LIGHTS 32
 #define MAX_SPOT_LIGHTS 2
@@ -80,14 +97,19 @@ float PCF(in vec4 shadowTexCoord)
   float sum = 0.0;
   float y = -1.5;
 
-  const int STEPS_COUNT = 3;
+  #define STEPS_COUNT 3
 
-  for (int i=0; i<STEPS_COUNT; i++, y += 1.5)
+  for (int i=0; i<STEPS_COUNT; i++)
   { 
     float x = -1.5;
 
-    for (int j=0; j<STEPS_COUNT; j++, x+= 1.5)
+    for (int j=0; j<STEPS_COUNT; j++)
+    {
       sum += OffsetLookup(shadowTexCoord, vec2(x, y));
+      x += 1.5;
+    }
+
+    y += 1.5;
   }
 
   return sum / float (STEPS_COUNT * STEPS_COUNT);
@@ -139,13 +161,13 @@ void main()
       float distance = length(lightPosition - position);
       float attenuation = min(1.0, lightRange / (lightAttenuation.x + lightAttenuation.y * distance + lightAttenuation.z * (distance * distance))); 
 
-      attenuation *= pow(max(0, 1 - theta / lightAngle), lightExponent);
+      attenuation *= pow(max(0.0, 1.0 - theta / lightAngle), lightExponent);
 
       mat4 shadowMatrix = spotLightShadowMatrices[i];
       vec4 shadowTexCoord = shadowMatrix * vec4(position, 1.0);
       float shadowAttenuation = 1.0;
 
-      if (shadowTexCoord.w > 0)
+      if (shadowTexCoord.w > 0.0)
       {
         shadowTexCoord /= shadowTexCoord.w;
 

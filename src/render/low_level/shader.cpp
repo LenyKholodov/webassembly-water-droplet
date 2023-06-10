@@ -14,7 +14,7 @@ struct engine::render::low_level::ShaderImpl
   std::string name; //shader name
   GLuint shader_id; //shader ID
 
-  ShaderImpl(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code)
+  ShaderImpl(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code, int lineno_offset)
     : context(context)
     , type(type)
     , name(name)
@@ -49,10 +49,13 @@ struct engine::render::low_level::ShaderImpl
 
       //compile shader
 
-    const char* sources[] = {source_code};
-    GLint sources_length[] = {(int)strlen(source_code)};
+    char line_number_buffer[64];
+    engine::common::xsnprintf(line_number_buffer, sizeof line_number_buffer, "#line %d\n", lineno_offset);
 
-    glShaderSource(shader_id, 1, sources, sources_length);
+    const char* sources[2] = {line_number_buffer, source_code};
+    GLint sources_length[2] = {(int)strlen(sources[0]), (int)strlen(sources[1])};
+
+    glShaderSource(shader_id, sizeof sources / sizeof *sources, sources, sources_length);
     glCompileShader(shader_id);
 
       //check status
@@ -80,7 +83,25 @@ struct engine::render::low_level::ShaderImpl
       if (real_log_size)
         log_buffer.resize(real_log_size - 1);
 
-      engine_log_info("%s", log_buffer.c_str());
+      std::vector<std::string> messages = common::split(log_buffer.c_str(), "\n");
+
+      for (size_t i = 0, count = messages.size(); i < count; ++i)
+      {
+        const char* msg = messages[i].c_str();
+
+        if (strstr(msg, "ERROR:"))
+        {
+          engine_log_error("%s: %s", name, msg);
+        }
+        else if (strstr(msg, "WARNING:"))
+        {
+          engine_log_warning("%s: %s", name, msg);
+        }
+        else
+        {
+          engine_log_info("%s: %s", name, msg);
+        }
+      }
 
       if (!compile_status)
         throw Exception::format("Shader '%s' compilation error", this->name.c_str());
@@ -107,13 +128,13 @@ struct engine::render::low_level::ShaderImpl
 /// Shader
 ///
 
-Shader::Shader(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code)
+Shader::Shader(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code, int lineno_offset)
 {
   engine_check_null(context);
   engine_check_null(name);
   engine_check_null(source_code);
 
-  impl = std::make_shared<ShaderImpl>(context, type, name, source_code);
+  impl = std::make_shared<ShaderImpl>(context, type, name, source_code, lineno_offset);
 }
 
 const char* Shader::name() const

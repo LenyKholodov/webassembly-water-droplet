@@ -342,6 +342,10 @@ void FrameBuffer::bind() const
     attachments[attachments_count++] = rt.attachment;
   }
 
+#ifdef __EMSCRIPTEN__
+  if (impl->color_targets.size() > 1)
+    throw Exception::format("MRT is not supported");
+#else
   switch (attachments_count)
   {
     case 0:
@@ -354,6 +358,7 @@ void FrameBuffer::bind() const
       glDrawBuffers(attachments_count, attachments);
       break;
   }
+#endif
 
     //check errors
 

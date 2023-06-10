@@ -358,7 +358,7 @@ class Shader
 {
   public:
     /// Constructor
-    Shader(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code);
+    Shader(const DeviceContextPtr& context, ShaderType type, const char* name, const char* source_code, int lineno_offset=0);
 
     /// Name
     const char* name() const;
@@ -679,10 +679,10 @@ class Device
     IndexBuffer create_index_buffer(size_t count);
 
     /// Create vertex shader
-    Shader create_vertex_shader(const char* name, const char* source_code);
+    Shader create_vertex_shader(const char* name, const char* source_code, int lineno_offset=0);
 
     /// Create pixel shader
-    Shader create_pixel_shader(const char* name, const char* source_code);
+    Shader create_pixel_shader(const char* name, const char* source_code, int lineno_offset=0);
 
     /// Create program
     Program create_program(const char* name, const Shader& vertex_shader, const Shader& pixel_shader);

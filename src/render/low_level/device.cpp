@@ -156,14 +156,14 @@ IndexBuffer Device::create_index_buffer(size_t count)
   return IndexBuffer(impl->context, count);
 }
 
-Shader Device::create_vertex_shader(const char* name, const char* source_code)
+Shader Device::create_vertex_shader(const char* name, const char* source_code, int lineno_offset)
 {
-  return Shader(impl->context, ShaderType_Vertex, name, source_code);
+  return Shader(impl->context, ShaderType_Vertex, name, source_code, lineno_offset);
 }
 
-Shader Device::create_pixel_shader(const char* name, const char* source_code)
+Shader Device::create_pixel_shader(const char* name, const char* source_code, int lineno_offset)
 {
-  return Shader(impl->context, ShaderType_Pixel, name, source_code);
+  return Shader(impl->context, ShaderType_Pixel, name, source_code, lineno_offset);
 }
 
 Program Device::create_program(const char* name, const Shader& vertex_shader, const Shader& pixel_shader)
@@ -171,16 +171,53 @@ Program Device::create_program(const char* name, const Shader& vertex_shader, co
   return Program(impl->context, name, vertex_shader, pixel_shader);
 }
 
+namespace
+{
+
+const char* strstr_with_line_numbers(const char* s, const char* tag, int& lineno)
+{
+  const char* p = s;
+  const char* q = tag;
+
+  for (; *p != '\0'; p++)
+  {
+    if (*p == '\n')
+      lineno++;
+
+    if (*p == *q)
+    {
+      q++;
+
+      if (*q == '\0')
+        return p - strlen(tag) + 1;
+    }
+    else
+      q = tag;
+  }
+
+  return nullptr;
+}
+
+}
+
 Program Device::create_program_from_source(const char* name, const char* source_code)
 {
   engine_check_null(name);
   engine_check_null(source_code);
 
-  typedef std::unordered_map<std::string, std::string> SourceMap;
+  struct Source
+  {
+    std::string source_code;
+    int lineno;
+  };
+
+  typedef std::unordered_map<std::string, Source> SourceMap;
 
   SourceMap sources;
 
     //very basic version of one source combined shader parser
+
+  int lineno = 1;
 
   auto parser = [&](const char* start_pos) -> const char*
   {
@@ -189,7 +226,7 @@ Program Device::create_program_from_source(const char* name, const char* source_
 
     static const char* SHADER_PRAGMA_TAG = "#shader";
 
-    const char* next_pos = strstr(start_pos, SHADER_PRAGMA_TAG);
+    const char* next_pos = strstr_with_line_numbers(start_pos, SHADER_PRAGMA_TAG, lineno);
     const char* tag_line_start = next_pos;
 
       //find the next line
@@ -198,7 +235,11 @@ Program Device::create_program_from_source(const char* name, const char* source_
 
     const char* tag_line_end = next_pos;
 
-    for (; *next_pos == '\n' || *next_pos == ' '; next_pos++);
+    for (; *next_pos == '\n' || *next_pos == ' '; next_pos++)
+      if (*next_pos == '\n')
+        lineno++;
+
+    int line_offset = lineno;
 
       //split tokens in a line
 
@@ -208,7 +249,7 @@ Program Device::create_program_from_source(const char* name, const char* source_
 
       //search the end of source
 
-    const char* end_pos = strstr(next_pos, SHADER_PRAGMA_TAG);
+    const char* end_pos = strstr_with_line_numbers(next_pos, SHADER_PRAGMA_TAG, lineno);
 
       //remove the leading spaces
 
@@ -224,8 +265,12 @@ Program Device::create_program_from_source(const char* name, const char* source_
       //add new source
 
     std::string& shader_type = tokens[1];
+    auto& source = sources[shader_type];
 
-    sources[shader_type].assign(next_pos, end_pos);
+    source.source_code.assign(next_pos, end_pos);
+    source.lineno = line_offset;
+
+    engine_log_debug("!!! %s %s: %d", name, shader_type.c_str(), line_offset);
 
     if (!*end_pos)
       return nullptr;
@@ -237,8 +282,8 @@ Program Device::create_program_from_source(const char* name, const char* source_
 
     //create shaders
 
-  Shader vertex_shader = create_vertex_shader(common::format("vs.%s", name).c_str(), sources["vertex"].c_str());
-  Shader pixel_shader = create_pixel_shader(common::format("ps.%s", name).c_str(), sources["pixel"].c_str());
+  Shader vertex_shader = create_vertex_shader(common::format("vs.%s", name).c_str(), sources["vertex"].source_code.c_str(), sources["vertex"].lineno);
+  Shader pixel_shader = create_pixel_shader(common::format("ps.%s", name).c_str(), sources["pixel"].source_code.c_str(), sources["pixel"].lineno);
   Program program = create_program(name, vertex_shader, pixel_shader);
 
   return program;
