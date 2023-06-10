@@ -1,7 +1,7 @@
-// emcc main.cpp -o index.html -s USE_WEBGL2=1 -s USE_GLFW=3 -s WASM=1 -std=c++1z
+#include <common/log.h>
 
-// base:  https://www.glfw.org/docs/latest/quick.html#quick_example
-// ref: https://gist.github.com/SuperV1234/5c5ad838fe5fe1bf54f9
+
+//////
 
 #include <functional>
 #include <vector>
@@ -77,6 +77,8 @@ void check_error(GLuint shader)
 
 int main(void)
 {
+        engine_log_info("Application has been started");
+
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);
     if (!glfwInit())

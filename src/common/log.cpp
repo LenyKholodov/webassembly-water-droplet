@@ -5,6 +5,10 @@
 
 #include <sys/time.h>
 
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
 namespace engine {
 namespace common {
 namespace log {
@@ -42,6 +46,7 @@ void vprintf(LogLevel log_level, const LogContext* context, const char* format, 
   if (!format)
     return;
 
+#ifndef EMSCRIPTEN
   char time_buffer[128];  
   timeval current_time;
 
@@ -51,6 +56,7 @@ void vprintf(LogLevel log_level, const LogContext* context, const char* format, 
   unsigned int milliseconds = ((unsigned int)(current_time.tv_usec % 1000000)) / 1000;  
 
   const char* log_level_string = get_log_level_string(log_level);
+#endif
 
   char location_buffer[128] = {0};
 
@@ -59,10 +65,44 @@ void vprintf(LogLevel log_level, const LogContext* context, const char* format, 
     engine::common::xsnprintf(location_buffer, sizeof location_buffer, "%s(%d)", context->function, context->line);
   }
 
+#ifdef EMSCRIPTEN
+  char output_buffer[512] = {0};
+
+  engine::common::xsnprintf(output_buffer, sizeof output_buffer, "%s: ", location_buffer);
+
+  int len = strlen(output_buffer);
+  engine::common::xvsnprintf(output_buffer + len, sizeof output_buffer - len, format, args);
+
+  EM_ASM(
+    var s = Module.UTF8ToString($0, $1);
+    switch ($2) {
+      case 0: //fatal
+      case 1: //error
+        console.error(s);
+        break;
+      case 2: //warning
+        console.warn(s);
+        break;
+      case 3: //info
+        console.info(s);
+        break;
+      case 4: //debug
+        console.debug(s);
+        break;
+      case 5: //trace
+        console.trace(s);
+        break;
+      default:
+        console.log(s);
+        break;
+    }
+  , output_buffer, strlen(output_buffer), log_level);
+#else
   fprintf(stderr, "%s.%03u [%5s] %30s: ", time_buffer, milliseconds, log_level_string, location_buffer);
   vfprintf(stderr, format, args);
   fprintf(stderr, "\n");
   fflush(stderr);
+#endif
 }
 
 }}}
