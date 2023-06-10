@@ -58,11 +58,6 @@ static void error_callback(int error, const char *description)
 {
     fprintf(stderr, "Error: %s\n", description);
 }
-static void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
-{
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-}
 
 std::function<void()> loop;
 void main_loop() { loop(); }
@@ -86,6 +81,8 @@ void check_error(GLuint shader)
 
 int main(void)
 {
+  try
+  {
     engine_log_info("Application has been started");
 
       //components loading
@@ -95,21 +92,11 @@ int main(void)
       //application setup
 
     Application app;
+    Window window("Render test", 640, 480);
 
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);
-    if (!glfwInit())
-        exit(EXIT_FAILURE);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-    auto window = glfwCreateWindow(640, 480, "Simple example", NULL, NULL);
-    if (!window)
-    {
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
-    glfwSetKeyCallback(window, key_callback);
-    glfwMakeContextCurrent(window);
+    glfwMakeContextCurrent(window.handle());
 #ifdef __EMSCRIPTEN__
 #else
     gladLoadGL();
@@ -146,10 +133,13 @@ int main(void)
                           sizeof(vertices[0]), (void *)(sizeof(float) * 2));
 
     app.main_loop([&]() {
+        if (window.should_close())
+          app.exit();
+
         float ratio;
         int width, height;
         mat4x4 m, p, mvp;
-        glfwGetFramebufferSize(window, &width, &height);
+        glfwGetFramebufferSize(window.handle(), &width, &height);
         ratio = width / (float)height;
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -160,8 +150,10 @@ int main(void)
         glUseProgram(program);
         glUniformMatrix4fv(mvp_location, 1, GL_FALSE, (const GLfloat *)mvp);
         glDrawArrays(GL_TRIANGLES, 0, 3);
-        glfwSwapBuffers(window);
-        //glfwPollEvents();
+
+        //image presenting
+
+        window.swap_buffers();
 
         //wait for next frame
 
@@ -169,17 +161,14 @@ int main(void)
 
         return TIMEOUT_MS;
     });
-/*
-#ifdef __EMSCRIPTEN__
-    emscripten_set_main_loop(main_loop, 0, true);
-#else
-    while (!glfwWindowShouldClose(window))
-        main_loop();
-#endif
-*/
-    glfwDestroyWindow(window);
-    //glfwTerminate();
 
     engine_log_info("Exiting from application...");
-    exit(EXIT_SUCCESS);
+
+    return 0;
+  }
+  catch (std::exception& e)
+  {
+    engine_log_fatal("%s\n", e.what());
+    return 1;
+  }
 }

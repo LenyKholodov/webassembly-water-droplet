@@ -143,12 +143,17 @@ struct Window::Impl
       //setting minimal OpenGL version 4.1
       //TODO: configuration
 
+#ifndef __EMSCRIPTEN__
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, true);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true); 
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, false);
+#else
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
 
       //if width and height was not requested, create full screen window
     if (!width && !height)
@@ -164,7 +169,9 @@ struct Window::Impl
     if (!window)
     {
       const char* error = "";
+#ifndef __EMSCRIPTEN__
       glfwGetError(&error);
+#endif
 
       throw Exception::format("GLFW window creation error: %s", error);
     }
