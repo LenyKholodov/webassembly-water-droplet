@@ -64,6 +64,7 @@ enum PixelFormat
   PixelFormat_RGBA8,
   PixelFormat_RGB16F,
   PixelFormat_D24,
+  PixelFormat_D16,
 };
 
 /// Texture filter

@@ -216,7 +216,25 @@ struct Program::Impl
       if (real_log_size)
         log_buffer.resize(real_log_size - 1);
 
-      engine_log_info("%s", log_buffer.c_str());
+      std::vector<std::string> messages = common::split(log_buffer.c_str(), "\n");
+
+      for (size_t i = 0, count = messages.size(); i < count; ++i)
+      {
+        const char* msg = messages[i].c_str();
+
+        if (strstr(msg, "ERROR:"))
+        {
+          engine_log_error("%s: %s", name, msg);
+        }
+        else if (strstr(msg, "WARNING:"))
+        {
+          engine_log_warning("%s: %s", name, msg);
+        }
+        else
+        {
+          engine_log_info("%s: %s", name, msg);
+        }
+      }
     }
 
       //get parameters

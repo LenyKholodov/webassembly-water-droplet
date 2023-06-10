@@ -362,7 +362,21 @@ struct Pass::Impl
         glUniform4fv(param.location, elements_count, &property.get<math::vec4f>()[0]);
         break;
       case PropertyType_Mat4f:
+#ifdef __EMSCRIPTEN__
+      {
+        math::mat4f m[16];
+        const size_t MAX_MATRIX_COUNT = sizeof m / sizeof *m;
+
+        engine_check(MAX_MATRIX_COUNT >= elements_count);
+
+        for (size_t i=0; i<elements_count; i++)
+          m[i] = transpose(property.get<math::mat4f>());
+        
+        glUniformMatrix4fv(param.location, elements_count, GL_FALSE, &m[0][0][0]);
+      }
+#else
         glUniformMatrix4fv(param.location, elements_count, GL_TRUE, &property.get<math::mat4f>()[0][0]);
+#endif
         break;
       case PropertyType_IntArray:
         ArrayChecker<int>::check(program, property, param);

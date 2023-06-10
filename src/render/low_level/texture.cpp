@@ -71,7 +71,11 @@ struct Texture::Impl
     switch (format)
     {
       case PixelFormat_RGBA8:
+        #ifdef __EMSCRIPTEN__
+        gl_internal_format = GL_RGBA;
+        #else
         gl_internal_format = GL_RGBA8;
+        #endif
         gl_uncompressed_format = GL_RGBA;
         gl_uncompressed_type = GL_UNSIGNED_BYTE;
         break;
@@ -83,6 +87,11 @@ struct Texture::Impl
       case PixelFormat_D24:
         gl_internal_format = GL_DEPTH_COMPONENT;
         gl_uncompressed_format = GL_DEPTH_COMPONENT;
+        gl_uncompressed_type = GL_UNSIGNED_INT;      
+        break;
+      case PixelFormat_D16:
+        gl_internal_format = GL_DEPTH_COMPONENT16;
+        gl_uncompressed_format = GL_DEPTH_COMPONENT16;
         gl_uncompressed_type = GL_UNSIGNED_INT;      
         break;
       default:
@@ -123,8 +132,9 @@ struct Texture::Impl
         break;
     }
 
+#ifndef __EMSCRIPTEN__
     glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(mips_count - 1));
-
+#endif
     context->check_errors();
   }
 

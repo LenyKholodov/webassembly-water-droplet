@@ -77,7 +77,7 @@ int main(void)
     math::vec3f camera_move_direction(0.f);
 
     Application app;
-    Window window("Render test");
+    Window window("Render test", 640, 480);
 
     window.set_keyboard_handler([&](Key key, bool pressed) {
       math::vec3f direction_change;
@@ -264,9 +264,7 @@ int main(void)
     SceneRenderer scene_renderer(window, render_options);
     Device render_device = scene_renderer.device();
 
-    scene_renderer.add_pass("G-Buffer");
-    //scene_renderer.add_pass("Deferred Lighting");
-    //scene_renderer.add_pass("Projectile Maps Rendering");
+    bool passes_initialized = false;
 
       //resources creation
 
@@ -311,6 +309,15 @@ int main(void)
     {
       if (window.should_close())
         app.exit();
+
+      if (!passes_initialized)
+      {
+        scene_renderer.add_pass("LPP-GeometryPass");
+        //scene_renderer.add_pass("Deferred Lighting");
+        //scene_renderer.add_pass("Projectile Maps Rendering");
+
+        passes_initialized = true;
+      }
 
       double new_time = app.time();
       double dt = new_time - last_time;

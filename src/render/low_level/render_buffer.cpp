@@ -14,6 +14,7 @@ struct RenderBuffer::Impl
     : context(context)
     , format(format)
   {
+    engine_log_debug("%s(%u)", __FILE__, __LINE__);
     engine_check(context);
 
     glGenRenderbuffers(1, &render_buffer_id);
@@ -37,6 +38,9 @@ struct RenderBuffer::Impl
           break;
         case PixelFormat_D24:
           gl_internal_format = GL_DEPTH_COMPONENT;
+          break;
+        case PixelFormat_D16:
+          gl_internal_format = GL_DEPTH_COMPONENT16;
           break;
         default:
           throw Exception::format("Invalid render buffer pixel format %d", format);

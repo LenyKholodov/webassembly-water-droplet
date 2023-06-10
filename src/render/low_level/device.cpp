@@ -270,8 +270,6 @@ Program Device::create_program_from_source(const char* name, const char* source_
     source.source_code.assign(next_pos, end_pos);
     source.lineno = line_offset;
 
-    engine_log_debug("!!! %s %s: %d", name, shader_type.c_str(), line_offset);
-
     if (!*end_pos)
       return nullptr;
 
