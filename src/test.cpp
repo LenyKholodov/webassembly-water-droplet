@@ -1,4 +1,13 @@
+#include <application/application.h>
+#include <application/window.h>
+#include <common/exception.h>
 #include <common/log.h>
+#include <common/component.h>
+#include <math/utility.h>
+
+using namespace engine::common;
+using namespace engine::application;
+using namespace engine;
 
 
 //////
@@ -77,7 +86,15 @@ void check_error(GLuint shader)
 
 int main(void)
 {
-        engine_log_info("Application has been started");
+    engine_log_info("Application has been started");
+
+      //components loading
+
+    ComponentScope components("engine::render::scene::passes::*");
+
+      //application setup
+
+    Application app;
 
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);
@@ -128,7 +145,7 @@ int main(void)
     glVertexAttribPointer(vcol_location, 3, GL_FLOAT, GL_FALSE,
                           sizeof(vertices[0]), (void *)(sizeof(float) * 2));
 
-    loop = [&] {
+    app.main_loop([&]() {
         float ratio;
         int width, height;
         mat4x4 m, p, mvp;
@@ -144,17 +161,25 @@ int main(void)
         glUniformMatrix4fv(mvp_location, 1, GL_FALSE, (const GLfloat *)mvp);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glfwSwapBuffers(window);
-        glfwPollEvents();
-    };
+        //glfwPollEvents();
 
+        //wait for next frame
+
+        static const size_t TIMEOUT_MS = 10;
+
+        return TIMEOUT_MS;
+    });
+/*
 #ifdef __EMSCRIPTEN__
     emscripten_set_main_loop(main_loop, 0, true);
 #else
     while (!glfwWindowShouldClose(window))
         main_loop();
 #endif
-
+*/
     glfwDestroyWindow(window);
-    glfwTerminate();
+    //glfwTerminate();
+
+    engine_log_info("Exiting from application...");
     exit(EXIT_SUCCESS);
 }
