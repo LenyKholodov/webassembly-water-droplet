@@ -4,11 +4,12 @@
 #include <common/log.h>
 #include <common/component.h>
 #include <math/utility.h>
+#include <media/image.h>
 
 using namespace engine::common;
 using namespace engine::application;
+using namespace engine::media::image;
 using namespace engine;
-
 
 //////
 
@@ -93,6 +94,12 @@ int main(void)
 
     Application app;
     Window window("Render test", 640, 480);
+
+      //load resources
+
+    Image img1("media/textures/stone_diffuse.jpg");
+
+    engine_log_debug("image: %u x %u x %p", img1.width(), img1.height(),img1.bitmap());
 
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);

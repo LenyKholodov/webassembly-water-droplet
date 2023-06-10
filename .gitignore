@@ -1,3 +1,4 @@
 dist/index.js
 dist/index.wasm
+dist/index.data
 tmp/
