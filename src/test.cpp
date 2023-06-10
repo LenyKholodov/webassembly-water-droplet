@@ -97,10 +97,6 @@ int main(void)
 
       //load resources
 
-    Image img1("media/textures/stone_diffuse.jpg");
-
-    engine_log_debug("image: %u x %u x %p", img1.width(), img1.height(),img1.bitmap());
-
     GLint mvp_location, vpos_location, vcol_location;
     glfwSetErrorCallback(error_callback);
     glfwMakeContextCurrent(window.handle());
