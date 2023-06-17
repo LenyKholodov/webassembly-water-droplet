@@ -1,8 +1,10 @@
 #include <media/geometry.h>
 #include <common/exception.h>
+#include <common/log.h>
 
 #include <vector>
 
+#define FAST_OBJ_IMPLEMENTATION
 #include <third-party/fast_obj/fast_obj.h>
 
 using namespace engine::media::geometry;
@@ -19,7 +21,7 @@ Model MeshFactory::load_obj_model(const char* file_name)
   {
     Model model;
 
-      //parse materials
+      //load materials
     
     for (size_t i=0; i<mesh->material_count; i++)
     {
@@ -33,10 +35,88 @@ Model MeshFactory::load_obj_model(const char* file_name)
       properties.set("emissionColor", math::vec3f(material.Ke[0], material.Ke[1], material.Ke[2]));
       properties.set("shininess", material.Ns);
 
-      result_mtl.add_texture("diffuseTexture", material.map_Kd.path);
-      result_mtl.add_texture("ambientTexture", material.map_Ka.path);
-      result_mtl.add_texture("specularTexture", material.map_Ks.path);
-      result_mtl.add_texture("emissionTexture", material.map_Ke.path);
+      if (material.map_Kd.path) result_mtl.add_texture("diffuseTexture", material.map_Kd.path);
+      if (material.map_Ka.path) result_mtl.add_texture("ambientTexture", material.map_Ka.path);
+      if (material.map_Ks.path) result_mtl.add_texture("specularTexture", material.map_Ks.path);
+      if (material.map_Ke.path) result_mtl.add_texture("emissionTexture", material.map_Ke.path);
+
+      model.materials.insert(material.name, result_mtl);
+    }
+
+      //load vertices
+
+    struct Hasher
+    {
+      size_t operator()(const std::tuple<unsigned int, unsigned int, unsigned int>& v) const { 
+        return std::get<0>(v) ^ std::get<1>(v) ^ std::get<2>(v);
+      }
+    };
+
+    std::unordered_map<std::tuple<unsigned int, unsigned int, unsigned int>, size_t, Hasher> vertex_map;
+    std::vector<Vertex> vertices;
+    std::vector<Mesh::index_type> indices;
+
+    vertices.reserve(mesh->position_count);
+    indices.reserve(mesh->index_count);
+
+    const fastObjIndex* src_index = mesh->indices;
+
+    for (size_t i=0; i<mesh->index_count; i++, src_index++)
+    {
+      std::tuple<unsigned int, unsigned int, unsigned int> key(src_index->p, src_index->t, src_index->n);
+      auto it = vertex_map.find(key);
+
+      if (it == vertex_map.end())
+      {
+          //add new vertex
+
+        Vertex vertex;
+
+        vertex.position = mesh->positions[src_index->p];
+        vertex.tex_coord = mesh->texcoords[src_index->t];
+        vertex.normal = mesh->normals[src_index->n];
+    
+        size_t index = vertices.size();
+        vertices.push_back(vertex);
+        vertex_map.insert(std::make_pair(key, index));
+
+        indices.push_back(index);
+      }
+      else
+      {
+        //use existing vertex
+    
+        indices.push_back(it->second);
+      }
+    }
+
+      //copy vertices and indices to model
+
+    model.mesh.vertices_resize(vertices.size());
+    model.mesh.indices_resize(indices.size());
+
+    std::copy(vertices.begin(), vertices.end(), model.mesh.vertices_data());
+    std::copy(indices.begin(), indices.end(), model.mesh.indices_data());
+
+      //load geometry
+
+    for (size_t i=0; i<mesh->group_count; i++)
+    {
+      fastObjGroup& group = mesh->groups[i];
+      unsigned int* face_material = mesh->face_materials + group.face_offset;
+      unsigned int index_offset = group.index_offset;
+      unsigned int current_material = (unsigned int)-1;
+      unsigned int group_start_index = index_offset;
+      
+      for (size_t j=0; j<group.face_count+1; j++, face_material++, index_offset += 3)
+        if (current_material != *face_material || j == group.face_count)
+        {
+          if (group_start_index != index_offset)
+            model.mesh.add_primitive(mesh->materials[current_material].name, PrimitiveType_TriangleList, group_start_index, index_offset - group_start_index, 0);
+          
+          current_material = *face_material;
+          group_start_index = index_offset;
+        }
     }
 
     return model;

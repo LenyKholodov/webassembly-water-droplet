@@ -268,6 +268,17 @@ int main(void)
 
       //resources creation
 
+    media::geometry::Model leaf = media::geometry::MeshFactory::load_obj_model("media/meshes/leaf.obj");
+
+    for (size_t i=0, count=leaf.mesh.primitives_count(); i<count; i++)
+    {
+      const media::geometry::Primitive& primitive = leaf.mesh.primitive(i);
+      media::geometry::Material* material = leaf.materials.find(primitive.material.c_str());
+
+      engine_log_debug("primitive %u: first=%u, count=%u; mtl='%s', texcount=%u", i, primitive.first, primitive.count, primitive.material.c_str(),
+        material ? material->textures_count() : 0);
+    }
+
     Texture model_diffuse_texture = render_device.create_texture2d("media/textures/brickwall_diffuse.jpg");
     Texture model_normal_texture = render_device.create_texture2d("media/textures/brickwall_normal.jpg");
     Texture model_specular_texture = render_device.create_texture2d("media/textures/brickwall_specular.jpg");

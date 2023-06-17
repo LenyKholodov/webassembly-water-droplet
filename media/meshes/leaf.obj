@@ -1,7 +1,4 @@
-# 3ds Max Wavefront OBJ Exporter v0.97b - (c)2007 guruware
-# File Created: 12.12.2012 18:31:14
-
-mtllib leaf_4.mtl
+mtllib leaf.mtl
 
 #
 # object leaf_1
