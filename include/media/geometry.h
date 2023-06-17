@@ -1,6 +1,7 @@
 #pragma once
 
 #include <math/vector.h>
+#include <common/property_map.h>
 
 #include <string>
 #include <memory>
@@ -115,6 +116,89 @@ class Mesh
     std::shared_ptr<Impl> impl;
 };
 
+/// Texture
+struct Texture
+{
+  std::string name; //name of texture
+  std::string file_name; //path to texture file
+
+  Texture() {}
+  Texture(const char* name, const char* file_name);
+};
+
+/// Material
+class Material
+{
+  public:
+    /// Constructor
+    Material();
+
+    /// Properties
+    const common::PropertyMap& properties() const;
+
+    /// Properties
+    common::PropertyMap& properties();
+
+    /// Textures count
+    size_t textures_count() const;
+
+    /// Add texture
+    size_t add_texture(const char* name, const char* file_name);
+
+    /// Add texture
+    size_t add_texture(const Texture&);
+
+    /// Remove texture
+    void remove_texture(const char* name);
+
+    /// Remove texture
+    void remove_texture(size_t index);
+
+    /// Find texture by name
+    Texture* find_texture(const char* name) const;
+
+    /// Get texture by name or throw exception
+    Texture& get_texture(size_t index) const;
+
+  private:
+    struct Impl;
+    std::shared_ptr<Impl> impl;
+};
+
+/// Material list
+class MaterialList
+{
+  public:
+    /// List of materials
+    MaterialList();
+
+    /// Material count
+    size_t count() const;
+
+    /// Add material
+    void insert(const char* name, const Material& material);
+
+    /// Remove texture
+    void remove(const char* name);
+
+    /// Find material by name
+    Material* find(const char* name) const;
+
+    /// Get material by name or throw exception
+    Material& get(const char* name) const;
+
+  private:
+    struct Impl;
+    std::shared_ptr<Impl> impl;
+};
+
+/// Model
+struct Model
+{
+  MaterialList materials; //materials
+  Mesh         mesh; //mesh with primitives
+};
+
 /// Mesh factory
 class MeshFactory
 {
@@ -122,6 +206,9 @@ class MeshFactory
     /// create simple geometry objects
     static Mesh create_box(const char* material, float width, float height, float depth, const math::vec3f& offset = math::vec3f());
     static Mesh create_sphere(const char* material, float radius, const math::vec3f& offset = math::vec3f());
+
+    /// load OBJ files
+    static Model load_obj_model(const char* file_name);
 };
 
 }}}

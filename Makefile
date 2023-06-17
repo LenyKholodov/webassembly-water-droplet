@@ -1,9 +1,9 @@
 OUT_DIR := dist
 TARGET := $(OUT_DIR)/index.js
-MEDIA_FILES := $(wildcard media/textures/*) $(wildcard media/shaders/*)
+MEDIA_FILES := $(wildcard media/textures/*) $(wildcard media/shaders/*) $(wildcard media/meshes/*)
 LINK_FLAGS := -s WASM=1 -s USE_SDL=2 -s USE_GLFW=3 -sNO_DISABLE_EXCEPTION_CATCHING  -s 'EXPORTED_RUNTIME_METHODS=["UTF8ToString"]' -sUSE_SDL_IMAGE=2 -s SDL2_IMAGE_FORMATS='["png","jpg"]'
 LINK_FLAGS += $(MEDIA_FILES:%=--embed-file "%")
-INCLUDE_DIRS := include
+INCLUDE_DIRS := include .
 CC_FLAGS := -std=c++17 -O3 ${INCLUDE_DIRS:%=-I%}
 TMP_DIR := tmp
 SRCS := $(wildcard src/**/*.cpp) $(wildcard src/**/**/*.cpp) $(wildcard src/**/*.c) $(wildcard src/*.cpp) $(wildcard src/*.c)
