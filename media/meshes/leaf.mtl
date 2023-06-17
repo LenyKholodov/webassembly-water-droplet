@@ -1,5 +1,7 @@
 newmtl 05___Default
-map_Kd media/textures/stem_texture_01.png
+map_Kd ../textures/stem_texture_01.png
+map_Ks ../textures/stem_texture_01.png
+map_Bump ../textures/leaf_normal.png
 	Ns 10.0000
 	Ni 1.5000
 	d 1.0000
@@ -12,7 +14,9 @@ map_Kd media/textures/stem_texture_01.png
 	Ke 0.0000 0.0000 0.0000
 
 newmtl 03___Default
-map_Kd media/textures/leaf_color.png
+map_Kd ../textures/leaf_color.png
+map_Ks ../textures/leaf_color.png
+map_Bump ../textures/leaf_normal.png
 	Ns 10.0000
 	Ni 1.5000
 	d 1.0000

@@ -164,36 +164,6 @@ int main(void)
 
     camera->bind_to_parent(*scene_root);
 
-      //scene geometry
-
-    scene::Mesh::Pointer floor = scene::Mesh::create();
-    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", 50.f, 0.01f, 50.f);
-
-    floor->set_mesh(floor_mesh);
-    floor->bind_to_parent(*scene_root);
-
-    scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-    media::geometry::Mesh media_mesh;
-
-    int row_size = ::floor(sqrt(MESHES_COUNT));
-
-    for (int i = 0; i < row_size; i++)
-    {
-      for (int j = 0; j < row_size; j++)
-      {
-        math::vec3f offset((i - row_size / 2) * MESHES_POSITION_RADIUS, 0.5f, (j - row_size / 2) * MESHES_POSITION_RADIUS);
-
-        if ((i + j) % 2)
-          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_box("mtl1", 1.f, 1.f, 1.f, offset));
-        else
-          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_sphere("mtl1", 1.f, offset));
-      }
-    }
-
-    mesh->set_mesh(media_mesh.merge_primitives());
-    mesh->bind_to_parent(*scene_root);
-
       //scene lights
 
     Node::Pointer lights_parent = Node::create();
@@ -268,17 +238,6 @@ int main(void)
 
       //resources creation
 
-    media::geometry::Model leaf = media::geometry::MeshFactory::load_obj_model("media/meshes/leaf.obj");
-
-    for (size_t i=0, count=leaf.mesh.primitives_count(); i<count; i++)
-    {
-      const media::geometry::Primitive& primitive = leaf.mesh.primitive(i);
-      media::geometry::Material* material = leaf.materials.find(primitive.material.c_str());
-
-      engine_log_debug("primitive %u: first=%u, count=%u; mtl='%s', texcount=%u", i, primitive.first, primitive.count, primitive.material.c_str(),
-        material ? material->textures_count() : 0);
-    }
-
     Texture model_diffuse_texture = render_device.create_texture2d("media/textures/brickwall_diffuse.jpg");
     Texture model_normal_texture = render_device.create_texture2d("media/textures/brickwall_normal.jpg");
     Texture model_specular_texture = render_device.create_texture2d("media/textures/brickwall_specular.jpg");
@@ -305,6 +264,75 @@ int main(void)
     MaterialList materials = scene_renderer.materials();
 
     materials.insert("mtl1", mtl1);
+
+      //load geometry
+
+    media::geometry::Model leaf = media::geometry::MeshFactory::load_obj_model("media/meshes/leaf.obj");
+
+    for (size_t i=0, count=leaf.mesh.primitives_count(); i<count; i++)
+    {
+      const media::geometry::Primitive& primitive = leaf.mesh.primitive(i);
+      media::geometry::Material* asset_material = leaf.materials.find(primitive.material.c_str());
+
+      if (materials.find(primitive.material.c_str()))
+        continue;
+
+      Material render_material;
+      TextureList render_textures = render_material.textures();
+
+      render_material.set_properties(asset_material->properties());
+
+      for (size_t j=0, count=asset_material->textures_count(); j<count; j++)
+      {
+        const media::geometry::Texture& asset_texture = asset_material->get_texture(j);
+        Texture texture = render_device.create_texture2d(asset_texture.file_name.c_str());
+
+        texture.set_min_filter(TextureFilter_LinearMipLinear);
+        texture.set_mag_filter(TextureFilter_Linear);
+
+        render_textures.insert(asset_texture.name.c_str(), texture);
+      }
+
+      materials.insert(primitive.material.c_str(), render_material);
+    }
+
+      //scene geometry
+
+    scene::Mesh::Pointer floor = scene::Mesh::create();
+    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", 50.f, 0.01f, 50.f);
+
+    floor->set_mesh(floor_mesh);
+    floor->bind_to_parent(*scene_root);
+
+    scene::Mesh::Pointer mesh = scene::Mesh::create();
+
+    media::geometry::Mesh media_mesh;
+
+    int row_size = ::floor(sqrt(MESHES_COUNT));
+
+    for (int i = 0; i < row_size; i++)
+    {
+      for (int j = 0; j < row_size; j++)
+      {
+        math::vec3f offset((i - row_size / 2) * MESHES_POSITION_RADIUS, 0.5f, (j - row_size / 2) * MESHES_POSITION_RADIUS);
+
+        if ((i + j) % 2)
+          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_box("mtl1", 1.f, 1.f, 1.f, offset));
+        else
+          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_sphere("mtl1", 1.f, offset));
+      }
+    }
+
+    mesh->set_mesh(media_mesh.merge_primitives());
+    mesh->bind_to_parent(*scene_root);
+
+    {
+        scene::Mesh::Pointer mesh = scene::Mesh::create();
+
+        mesh->set_mesh(leaf.mesh);
+        mesh->set_scale(math::vec3f(0.5f));
+        mesh->bind_to_parent(*scene_root);
+    }
 
       //scene viewport setup
 

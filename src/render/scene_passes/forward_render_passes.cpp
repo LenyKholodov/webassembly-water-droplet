@@ -27,7 +27,7 @@ struct ForwardLightingPass : IScenePass
       : forward_lighting_program(device.create_program_from_file(FORWARD_LIGHTING_PROGRAM_FILE))
       , forward_lighting_pass(device.create_pass(forward_lighting_program))
     {
-      //forward_lighting_pass.set_depth_stencil_state(DepthStencilState(false, false, CompareMode_AlwaysPass));
+      forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
 
       engine_log_debug("Forward Lighting pass has been created");
     }

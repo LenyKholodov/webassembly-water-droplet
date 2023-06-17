@@ -23,3 +23,8 @@ const PropertyMap& Material::properties() const
 {
   return impl->properties;
 }
+
+void Material::set_properties(const PropertyMap& properties)
+{
+  impl->properties = properties;
+}

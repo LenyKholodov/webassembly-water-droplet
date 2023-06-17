@@ -209,6 +209,7 @@ class Material
 
     /// Properties
     const PropertyMap& properties() const;
+    void set_properties(const PropertyMap& properties);
 
   private:
     struct Impl;

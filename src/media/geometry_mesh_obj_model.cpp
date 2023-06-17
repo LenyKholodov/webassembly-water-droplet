@@ -39,6 +39,7 @@ Model MeshFactory::load_obj_model(const char* file_name)
       if (material.map_Ka.path) result_mtl.add_texture("ambientTexture", material.map_Ka.path);
       if (material.map_Ks.path) result_mtl.add_texture("specularTexture", material.map_Ks.path);
       if (material.map_Ke.path) result_mtl.add_texture("emissionTexture", material.map_Ke.path);
+      if (material.map_bump.path) result_mtl.add_texture("normalTexture", material.map_bump.path);
 
       model.materials.insert(material.name, result_mtl);
     }
@@ -70,11 +71,15 @@ Model MeshFactory::load_obj_model(const char* file_name)
       {
           //add new vertex
 
+        const float* p = mesh->positions + src_index->p * 3;
+        const float* t = mesh->texcoords + src_index->t * 2;
+        const float* n = mesh->normals + src_index->n * 3;
         Vertex vertex;
 
-        vertex.position = mesh->positions[src_index->p];
-        vertex.tex_coord = mesh->texcoords[src_index->t];
-        vertex.normal = mesh->normals[src_index->n];
+        vertex.position = math::vec3f(p[0], p[1], p[2]);
+        vertex.tex_coord = math::vec2f(t[0], t[1]);
+        vertex.normal = math::vec3f(n[0], n[1], n[2]);
+        vertex.color = math::vec4f(1.0f, 0, 0, 1.0f);
     
         size_t index = vertices.size();
         vertices.push_back(vertex);
@@ -107,17 +112,21 @@ Model MeshFactory::load_obj_model(const char* file_name)
       unsigned int index_offset = group.index_offset;
       unsigned int current_material = (unsigned int)-1;
       unsigned int group_start_index = index_offset;
+
+      engine_check(group.index_offset % 3 == 0);
       
       for (size_t j=0; j<group.face_count+1; j++, face_material++, index_offset += 3)
         if (current_material != *face_material || j == group.face_count)
         {
           if (group_start_index != index_offset)
-            model.mesh.add_primitive(mesh->materials[current_material].name, PrimitiveType_TriangleList, group_start_index, index_offset - group_start_index, 0);
+            model.mesh.add_primitive(mesh->materials[current_material].name, PrimitiveType_TriangleList, group_start_index / 3, (index_offset - group_start_index) / 3, 0);
           
           current_material = *face_material;
           group_start_index = index_offset;
         }
     }
+
+    fast_obj_destroy(mesh);
 
     return model;
   }
