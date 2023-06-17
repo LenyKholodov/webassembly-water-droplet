@@ -400,7 +400,23 @@ struct Pass::Impl
         break;
       case PropertyType_Mat4fArray:
         ArrayChecker<math::mat4f>::check(program, property, param);
+#ifdef __EMSCRIPTEN__
+      {
+        math::mat4f m[64];
+        const size_t MAX_MATRIX_COUNT = sizeof m / sizeof *m;
+
+        engine_check(MAX_MATRIX_COUNT >= elements_count);
+
+        const std::vector<math::mat4f>& src = property.get<std::vector<math::mat4f>>();
+
+        for (size_t i=0; i<elements_count; i++)
+          m[i] = transpose(src[i]);
+        
+        glUniformMatrix4fv(param.location, elements_count, GL_FALSE, &m[0][0][0]);
+      }
+#else
         glUniformMatrix4fv(param.location, elements_count, GL_TRUE, &property.get<std::vector<math::mat4f>>()[0][0][0]);
+#endif
         break;
       default:
         throw Exception::format("Unexpected program '%s' parameter '%s' type %s",

@@ -312,7 +312,8 @@ int main(void)
 
       if (!passes_initialized)
       {
-        scene_renderer.add_pass("LPP-GeometryPass");
+        scene_renderer.add_pass("Forward Lighting");
+        //scene_renderer.add_pass("LPP-GeometryPass");
         //scene_renderer.add_pass("Deferred Lighting");
         //scene_renderer.add_pass("Projectile Maps Rendering");
 

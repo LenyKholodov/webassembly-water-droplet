@@ -91,6 +91,10 @@ class ShadowPass : IScenePass
         shadow = &node.set_user_data(Shadow(context.device(), shadow_program, SHADOW_MAP_SIZE));
       }
 
+        //cleanup
+
+      shadow->shadow_pass.remove_all_primitives();
+
         //configure view
 
       PropertyMap pass_properties = shadow->shadow_pass.properties();

@@ -20,9 +20,9 @@ struct Image::Impl
     if (!image)
       throw Exception::format("Failed to load image: '%s'", IMG_GetError());
 
-    if (image->format->format != SDL_PIXELFORMAT_RGBA8888)
+    if (image->format->format != SDL_PIXELFORMAT_ABGR8888)
     {
-      SDL_Surface* converted = SDL_ConvertSurfaceFormat(image, SDL_PIXELFORMAT_RGBA8888, 0);
+      SDL_Surface* converted = SDL_ConvertSurfaceFormat(image, SDL_PIXELFORMAT_ABGR8888, 0);
 
       SDL_FreeSurface(image);
 
