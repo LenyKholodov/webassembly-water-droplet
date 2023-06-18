@@ -74,8 +74,8 @@ Mesh MeshFactory::create_sphere(const char* material, float radius, const math::
   constexpr size_t TRIANGLES_COUNT = 2 * (SPHERE_PARALLELS_COUNT + 1) * SPHERE_MERIDIANS_COUNT;
   constexpr size_t VERTICES_COUNT = 2 + SPHERE_PARALLELS_COUNT * SPHERE_MERIDIANS_COUNT;
 
-  Vertex          vertices[VERTICES_COUNT];
-  Mesh::index_type indices[TRIANGLES_COUNT * 3];
+  std::vector<Vertex> vertices(VERTICES_COUNT);
+  std::vector<Mesh::index_type> indices(TRIANGLES_COUNT * 3);
 
   float horizontal_angle_step = 2.0f * constf::pi / float(SPHERE_MERIDIANS_COUNT - 1),
         vertical_angle_step   = constf::pi / float(SPHERE_PARALLELS_COUNT + 2);
@@ -91,7 +91,7 @@ Mesh MeshFactory::create_sphere(const char* material, float radius, const math::
 
   size_t base_vertex = 2;
 
-  Vertex* current_vertex = vertices + base_vertex;
+  Vertex* current_vertex = &vertices[0] + base_vertex;
 
     //generate vertices for each meridian
 
@@ -111,7 +111,7 @@ Mesh MeshFactory::create_sphere(const char* material, float radius, const math::
     }
   }
 
-  Mesh::index_type* current_index = indices;
+  Mesh::index_type* current_index = &indices[0];
 
     //fill indices
 
@@ -154,7 +154,7 @@ Mesh MeshFactory::create_sphere(const char* material, float radius, const math::
     vertex.position  = offset + vertex.normal * radius;
   }
 
-  return_value.add_primitive(material, PrimitiveType_TriangleList, vertices, sizeof(vertices) / sizeof(*vertices), indices, sizeof(indices) / sizeof(*indices));
+  return_value.add_primitive(material, PrimitiveType_TriangleList, &vertices[0], vertices.size(), &indices[0], indices.size());
 
   return return_value;
 }

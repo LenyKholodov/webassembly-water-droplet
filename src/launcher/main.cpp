@@ -1,19 +1,15 @@
 #include <scene/camera.h>
 #include <scene/mesh.h>
 #include <scene/light.h>
-#include <render/scene_render.h>
 #include <media/image.h>
-#include <scene/camera.h>
-#include <scene/node.h>
-#include <scene/light.h>
-#include <scene/mesh.h>
-#include <scene/projectile.h>
 #include <application/application.h>
 #include <application/window.h>
 #include <common/exception.h>
 #include <common/log.h>
 #include <common/component.h>
 #include <math/utility.h>
+
+#include "shared.h"
 
 #include <string>
 #include <ctime>
@@ -265,74 +261,9 @@ int main(void)
 
     materials.insert("mtl1", mtl1);
 
-      //load geometry
+      //create world
 
-    media::geometry::Model leaf = media::geometry::MeshFactory::load_obj_model("media/meshes/leaf.obj");
-
-    for (size_t i=0, count=leaf.mesh.primitives_count(); i<count; i++)
-    {
-      const media::geometry::Primitive& primitive = leaf.mesh.primitive(i);
-      media::geometry::Material* asset_material = leaf.materials.find(primitive.material.c_str());
-
-      if (materials.find(primitive.material.c_str()))
-        continue;
-
-      Material render_material;
-      TextureList render_textures = render_material.textures();
-
-      render_material.set_properties(asset_material->properties());
-
-      for (size_t j=0, count=asset_material->textures_count(); j<count; j++)
-      {
-        const media::geometry::Texture& asset_texture = asset_material->get_texture(j);
-        Texture texture = render_device.create_texture2d(asset_texture.file_name.c_str());
-
-        texture.set_min_filter(TextureFilter_LinearMipLinear);
-        texture.set_mag_filter(TextureFilter_Linear);
-
-        render_textures.insert(asset_texture.name.c_str(), texture);
-      }
-
-      materials.insert(primitive.material.c_str(), render_material);
-    }
-
-      //scene geometry
-
-    scene::Mesh::Pointer floor = scene::Mesh::create();
-    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", 50.f, 0.01f, 50.f);
-
-    floor->set_mesh(floor_mesh);
-    floor->bind_to_parent(*scene_root);
-
-    scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-    media::geometry::Mesh media_mesh;
-
-    int row_size = ::floor(sqrt(MESHES_COUNT));
-
-    for (int i = 0; i < row_size; i++)
-    {
-      for (int j = 0; j < row_size; j++)
-      {
-        math::vec3f offset((i - row_size / 2) * MESHES_POSITION_RADIUS, 0.5f, (j - row_size / 2) * MESHES_POSITION_RADIUS);
-
-        if ((i + j) % 2)
-          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_box("mtl1", 1.f, 1.f, 1.f, offset));
-        else
-          media_mesh = media_mesh.merge(media::geometry::MeshFactory::create_sphere("mtl1", 1.f, offset));
-      }
-    }
-
-    mesh->set_mesh(media_mesh.merge_primitives());
-    mesh->bind_to_parent(*scene_root);
-
-    {
-        scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-        mesh->set_mesh(leaf.mesh);
-        mesh->set_scale(math::vec3f(0.5f));
-        mesh->bind_to_parent(*scene_root);
-    }
+    World world(scene_root, scene_renderer);
 
       //scene viewport setup
 
@@ -348,6 +279,8 @@ int main(void)
     {
       if (window.should_close())
         app.exit();
+
+      world.update();
 
       if (!passes_initialized)
       {
