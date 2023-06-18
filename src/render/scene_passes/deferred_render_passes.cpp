@@ -119,16 +119,16 @@ struct GBufferPass : IScenePass
     {
         //create mesh data
 
-      RenderableMesh* renderable_mesh = mesh.find_user_data<RenderableMesh>();
+      RenderableMesh* renderable_mesh = mesh.mesh().find_user_data<RenderableMesh>();
 
       if (!renderable_mesh)
       {
-        renderable_mesh = &mesh.set_user_data(RenderableMesh(mesh, context));
+        renderable_mesh = &mesh.mesh().set_user_data(RenderableMesh(mesh.mesh(), context));
       }
 
         //add mesh to pass
 
-      g_buffer_pass.add_mesh(renderable_mesh->mesh, mesh.world_tm());
+      g_buffer_pass.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count());
     }
 
   private:

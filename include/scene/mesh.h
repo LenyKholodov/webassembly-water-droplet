@@ -19,8 +19,12 @@ class Mesh: public Node
     const media::geometry::Mesh& mesh() const;
     media::geometry::Mesh& mesh();
 
+    /// Primitives range
+    size_t first_primitive() const;
+    size_t primitives_count() const;
+
     /// Attach geometry
-    void set_mesh(const media::geometry::Mesh& mesh);
+    void set_mesh(const media::geometry::Mesh& mesh, size_t first_primitive=0, size_t primitives_count=(size_t)-1);
 
   protected:
     /// Constructor

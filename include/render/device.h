@@ -625,6 +625,8 @@ class Pass
     void add_mesh(
       const Mesh& mesh,
       const math::mat4f& model_tm = math::mat4f(1.0f),
+      size_t first_primitive=0,
+      size_t primitives_count=(size_t)-1,
       const common::PropertyMap& properties = default_primitive_properties());
 
     /// Remove all primitives from the pass

@@ -608,10 +608,15 @@ void Pass::add_primitive(const Primitive& primitive, const math::mat4f& model_tm
 }
 
 /// Add mesh to a pass
-void Pass::add_mesh(const Mesh& mesh, const math::mat4f& model_tm, const PropertyMap& properties)
+void Pass::add_mesh(const Mesh& mesh, const math::mat4f& model_tm, size_t first_primitive, size_t primitives_count, const PropertyMap& properties)
 {
-  for (size_t i = 0, count = mesh.primitives_count(); i < count; i++)
-    add_primitive(mesh.primitive(i), model_tm, properties);
+  for (size_t i=0, max_count = mesh.primitives_count(); i < primitives_count; i++)
+  {
+    if (first_primitive + i >= max_count)
+      break;
+
+    add_primitive(mesh.primitive(i + first_primitive), model_tm, properties);
+  }
 }
 
 void Pass::remove_all_primitives()

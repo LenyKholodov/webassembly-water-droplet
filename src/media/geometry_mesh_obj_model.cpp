@@ -119,7 +119,10 @@ Model MeshFactory::load_obj_model(const char* file_name)
         if (current_material != *face_material || j == group.face_count)
         {
           if (group_start_index != index_offset)
-            model.mesh.add_primitive(mesh->materials[current_material].name, PrimitiveType_TriangleList, group_start_index / 3, (index_offset - group_start_index) / 3, 0);
+          {
+            auto primitive_index = model.mesh.add_primitive(mesh->materials[current_material].name, PrimitiveType_TriangleList, group_start_index / 3, (index_offset - group_start_index) / 3, 0);
+            model.mesh.set_primitive_name(primitive_index, group.name);
+          }
           
           current_material = *face_material;
           group_start_index = index_offset;

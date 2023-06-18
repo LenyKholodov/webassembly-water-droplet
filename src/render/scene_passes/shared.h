@@ -29,8 +29,8 @@ struct RenderableMesh
 {
   low_level::Mesh mesh;
 
-  RenderableMesh(engine::scene::Mesh& mesh, ScenePassContext& context)
-    : mesh(context.device().create_mesh(mesh.mesh(), context.materials()))
+  RenderableMesh(media::geometry::Mesh& mesh, ScenePassContext& context)
+    : mesh(context.device().create_mesh(mesh, context.materials()))
   {
   }
 };

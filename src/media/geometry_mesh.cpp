@@ -13,9 +13,12 @@ typedef std::vector<Primitive> PrimitiveArray;
 /// Mesh implementation
 struct Mesh::Impl
 {
+  typedef std::unordered_map<const std::type_info*, UserDataPtr> UserDataMap;
+
   UninitializedStorage<Vertex> vertices_data;
   UninitializedStorage<index_type> indices_data;
   PrimitiveArray primitives;
+  UserDataMap user_data_map;
 
   uint32_t add_primitive(const char* material, PrimitiveType type, uint32_t first, uint32_t count, uint32_t base_vertex)
   {
@@ -284,6 +287,16 @@ uint32_t Mesh::add_primitive(const char* material, PrimitiveType type, const Ver
   return impl->add_primitive(material, type, vertices, vertices_count, indices, indices_count);
 }
 
+void Mesh::set_primitive_name(uint32_t index, const char* name)
+{
+  engine_check_null(name);
+
+  if (index >= impl->primitives.size())
+    throw Exception(format("engine::media::Mesh::set_primitive_name index %u out of bounds [0;%z)", index, impl->primitives.size()).c_str());
+
+  impl->primitives[index].name = name;
+}
+
 void Mesh::remove_primitive(uint32_t primitive_index)
 {
   if (primitive_index >= impl->primitives.size())
@@ -312,4 +325,25 @@ void Mesh::clear()
   remove_all_primitives();
   indices_clear();
   vertices_clear();
+}
+
+void Mesh::set_user_data_core(const std::type_info& type, const UserDataPtr& user_data)
+{
+  if (!user_data)
+  {
+    impl->user_data_map.erase(&type);
+    return;
+  }
+
+  impl->user_data_map[&type] = user_data;
+}
+
+Mesh::UserDataPtr Mesh::find_user_data_core(const std::type_info& type) const
+{
+  auto it = impl->user_data_map.find(&type);
+
+  if (it == impl->user_data_map.end())
+    return nullptr;
+
+  return it->second;
 }

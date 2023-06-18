@@ -1,6 +1,7 @@
 #include "shared.h"
 
 #include <common/log.h>
+#include <math/utility.h>
 
 #include "btBulletDynamicsCommon.h"
 
@@ -18,6 +19,8 @@ const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 5.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = 0;
+
+//todo: remove motion states from rigid bodies
 
 namespace
 {
@@ -105,11 +108,8 @@ struct World::Impl
 
       //create leaves
 
-    scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-    mesh->set_mesh(leaf_model.mesh);
-    mesh->set_scale(math::vec3f(0.5f));
-    mesh->bind_to_parent(*scene_root);
+     add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(45.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+     add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-45.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
 
       //configure physics
 
@@ -156,6 +156,34 @@ struct World::Impl
     floor->set_mesh(floor_mesh);
     floor->set_position(math::vec3f(ground_transform.getOrigin().getX(), ground_transform.getOrigin().getY(), ground_transform.getOrigin().getZ()));
     floor->bind_to_parent(*scene_root);
+  }
+
+  void add_stem(const math::vec3f& position, const math::quatf& rotation)
+  {
+      //create leaves
+
+    Node::Pointer node = Node::create();
+
+    for (size_t i=0, count=leaf_model.mesh.primitives_count(); i<count; i++)
+    {
+      const media::geometry::Primitive& primitive = leaf_model.mesh.primitive(i);
+      scene::Mesh::Pointer mesh = scene::Mesh::create();
+
+      mesh->set_mesh(leaf_model.mesh, i, 1);
+      mesh->bind_to_parent(*node);
+
+      if (primitive.name.find("leaf") == 0)
+      {
+        //primitive name starts from "leaf"
+
+        engine_log_debug("leaf %s", primitive.name.c_str());
+      }
+    }
+
+    node->set_position(position);
+    node->set_orientation(rotation);
+    node->set_scale(math::vec3f(0.2f));
+    node->bind_to_parent(*scene_root);
   }
 
   void generate_droplet()

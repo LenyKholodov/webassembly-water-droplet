@@ -2,10 +2,12 @@
 
 #include <math/vector.h>
 #include <common/property_map.h>
+#include <common/exception.h>
 
 #include <string>
 #include <memory>
 #include <cstdint>
+#include <typeinfo>
 
 namespace engine {
 namespace media {
@@ -37,6 +39,7 @@ struct Primitive
   uint32_t      count;         /// primitives count
   uint32_t      base_vertex;   /// base vertex index
   std::string   material;      /// material name
+  std::string   name;          /// name of the primitive
 };
 
 /// Mesh
@@ -96,6 +99,9 @@ class Mesh
     uint32_t add_primitive(const char* material_name, PrimitiveType type, uint32_t first, uint32_t count, uint32_t base_vertex);
     uint32_t add_primitive(const char* material_name, PrimitiveType type, const Vertex* vertices, index_type vertices_count, const index_type* indices, uint32_t indices_count);
 
+    /// Set primitive name
+    void set_primitive_name(uint32_t index, const char* name);
+
     /// Remove primitive
     void remove_primitive(uint32_t primitive_index);
 
@@ -110,6 +116,26 @@ class Mesh
 
     /// Clear all data
     void clear();
+
+    /// Store user data
+    template <class T> T& set_user_data(const T& value);
+
+    /// Remove user data
+    template <class T> void reset_user_data();
+
+    /// Find user data (nullptr if no attachment)
+    template <class T> T* find_user_data() const;
+
+    /// Read user data
+    template <class T> T& get_user_data() const;
+
+  private:
+    struct UserData;
+    template <class T> struct ConcreteUserData;
+    typedef std::shared_ptr<UserData> UserDataPtr;
+
+    void set_user_data_core(const std::type_info&, const UserDataPtr&);
+    UserDataPtr find_user_data_core(const std::type_info&) const;
 
   private:
     struct Impl;
@@ -210,5 +236,7 @@ class MeshFactory
     /// load OBJ files
     static Model load_obj_model(const char* file_name);
 };
+
+#include <media/detail/geometry.inl>
 
 }}}
