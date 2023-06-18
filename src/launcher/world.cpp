@@ -1,9 +1,11 @@
 #include "shared.h"
 
 #include <common/log.h>
+#include <common/named_dictionary.h>
 #include <math/utility.h>
 
 #include "btBulletDynamicsCommon.h"
+#include "BulletCollision/CollisionShapes/btShapeHull.h"
 
 using namespace engine::common;
 using namespace engine::render::scene;
@@ -35,12 +37,12 @@ float crand(float min=-1.0f, float max=1.0f)
   return frand() * (max - min) + min;
 }
 
-struct DropletParticle
+struct PhysBodySync
 {
   std::shared_ptr<btRigidBody> body;
   scene::Mesh::Pointer mesh;
 
-  DropletParticle(const std::shared_ptr<btRigidBody>& body, const scene::Mesh::Pointer& mesh)
+  PhysBodySync(const std::shared_ptr<btRigidBody>& body, const scene::Mesh::Pointer& mesh)
     : body(body)
     , mesh(mesh)
   {
@@ -61,8 +63,9 @@ struct World::Impl
   std::shared_ptr<btCollisionShape> ground_shape;
   std::shared_ptr<btCollisionShape> droplet_particle_shape;
   std::shared_ptr<btRigidBody> ground_body;
-  std::vector<std::shared_ptr<DropletParticle>> droplet_particles;
+  std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   media::geometry::Mesh droplet_debug_particle_mesh;
+  common::NamedDictionary<std::shared_ptr<btCollisionShape>> convex_shapes;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -166,7 +169,13 @@ struct World::Impl
 
     for (size_t i=0, count=leaf_model.mesh.primitives_count(); i<count; i++)
     {
+      using namespace media::geometry;
+
       const media::geometry::Primitive& primitive = leaf_model.mesh.primitive(i);
+
+      if (primitive.type != PrimitiveType_TriangleList)
+        continue;;
+
       scene::Mesh::Pointer mesh = scene::Mesh::create();
 
       mesh->set_mesh(leaf_model.mesh, i, 1);
@@ -176,7 +185,43 @@ struct World::Impl
       {
         //primitive name starts from "leaf"
 
-        engine_log_debug("leaf %s", primitive.name.c_str());
+        engine_log_debug("leaf found '%s'", primitive.name.c_str());
+
+        std::shared_ptr<btCollisionShape> shape;
+
+        if (auto* entry = convex_shapes.find(primitive.name))
+          shape = *entry;
+
+        if (!shape)
+        {
+          engine_log_debug("create convex shape '%s'", primitive.name.c_str());
+
+          const Vertex* src_vertices = leaf_model.mesh.vertices_data() + primitive.base_vertex;
+          const media::geometry::Mesh::index_type* src_index = leaf_model.mesh.indices_data() + primitive.first * 3;
+          std::vector<btScalar> dst_vertices(primitive.count * 3);
+          btScalar* dst_vertex = &dst_vertices[0];
+
+          for (size_t j=0, count=primitive.count; j<count; j++, src_index += 3, dst_vertex += 3)
+          {
+            for (size_t k=0; k<3; k++)
+              dst_vertex[k] = src_vertices[src_index[k]].position[k];
+          }
+
+          std::unique_ptr<btConvexHullShape> convex_shape(new btConvexHullShape(&dst_vertices[0], primitive.count * 3, sizeof(btScalar) * 3));
+
+          btShapeHull hull(convex_shape.get());
+
+          const float MARGIN = 0.5f;
+
+          if (!hull.buildHull(MARGIN))
+            throw Exception::format("buildHull failed for '%s'", primitive.name.c_str());
+
+          shape = std::make_shared<btConvexHullShape>(&hull.getVertexPointer()[0][0], hull.numVertices());
+
+          convex_shapes.insert(primitive.name.c_str(), shape);
+        }
+
+        //std::make_shared<PhysBodySync>(body, mesh)
       }
     }
 
@@ -226,7 +271,7 @@ struct World::Impl
     mesh->set_scale(math::vec3f(DROPLET_PARTICLE_RADIUS));
     mesh->bind_to_parent(*scene_root);
 
-    droplet_particles.push_back(std::make_shared<DropletParticle>(body, mesh));
+    droplet_particles.push_back(std::make_shared<PhysBodySync>(body, mesh));
   }
 
   void update()
@@ -237,7 +282,7 @@ struct World::Impl
 
       //sync debug droplet particles
 
-    for (std::shared_ptr<DropletParticle>& particle : droplet_particles)
+    for (std::shared_ptr<PhysBodySync>& particle : droplet_particles)
     {
       btTransform transform;
       particle->body->getMotionState()->getWorldTransform(transform);
