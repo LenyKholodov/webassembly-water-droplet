@@ -21,6 +21,7 @@ const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 5.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = 0;
+const float LEAF_MASS = 1.0f;
 
 //todo: remove motion states from rigid bodies
 
@@ -63,7 +64,7 @@ struct World::Impl
   std::shared_ptr<btCollisionShape> ground_shape;
   std::shared_ptr<btCollisionShape> droplet_particle_shape;
   std::shared_ptr<btRigidBody> ground_body;
-  std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
+  std::vector<std::shared_ptr<PhysBodySync>> phys_bodies;
   media::geometry::Mesh droplet_debug_particle_mesh;
   common::NamedDictionary<std::shared_ptr<btCollisionShape>> convex_shapes;
 
@@ -165,8 +166,6 @@ struct World::Impl
   {
       //create leaves
 
-    Node::Pointer node = Node::create();
-
     for (size_t i=0, count=leaf_model.mesh.primitives_count(); i<count; i++)
     {
       using namespace media::geometry;
@@ -179,7 +178,9 @@ struct World::Impl
       scene::Mesh::Pointer mesh = scene::Mesh::create();
 
       mesh->set_mesh(leaf_model.mesh, i, 1);
-      mesh->bind_to_parent(*node);
+      mesh->set_position(position);
+      mesh->set_orientation(rotation);
+      mesh->bind_to_parent(*scene_root);
 
       if (primitive.name.find("leaf") == 0)
       {
@@ -194,41 +195,87 @@ struct World::Impl
 
         if (!shape)
         {
-          engine_log_debug("create convex shape '%s'", primitive.name.c_str());
+          engine_log_debug("create phys mesh shape '%s'", primitive.name.c_str());
 
-          const Vertex* src_vertices = leaf_model.mesh.vertices_data() + primitive.base_vertex;
-          const media::geometry::Mesh::index_type* src_index = leaf_model.mesh.indices_data() + primitive.first * 3;
-          std::vector<btScalar> dst_vertices(primitive.count * 3);
-          btScalar* dst_vertex = &dst_vertices[0];
+          std::vector<math::vec3f> vertices;
+          std::vector<media::geometry::Mesh::index_type> indices;
+          std::unordered_map<media::geometry::Mesh::index_type, media::geometry::Mesh::index_type> index_map;
 
-          for (size_t j=0, count=primitive.count; j<count; j++, src_index += 3, dst_vertex += 3)
+          vertices.reserve(leaf_model.mesh.vertices_count());
+          indices.reserve(primitive.count * 3);
+
+          const auto* index = leaf_model.mesh.indices_data() + primitive.first * 3;
+
+          for (size_t i=0, count=primitive.count * 3; i<count; i++, index++)
           {
-            for (size_t k=0; k<3; k++)
-              dst_vertex[k] = src_vertices[src_index[k]].position[k];
+            size_t new_index = 0;
+            if (index_map.find(*index) == index_map.end())
+            {
+              index_map[*index] = vertices.size();
+              new_index = vertices.size();
+              vertices.push_back(leaf_model.mesh.vertices_data()[*index].position);
+            }
+            else
+            {
+              new_index = index_map[*index];
+            }
+
+            indices.push_back(new_index);
           }
 
-          std::unique_ptr<btConvexHullShape> convex_shape(new btConvexHullShape(&dst_vertices[0], primitive.count * 3, sizeof(btScalar) * 3));
+          std::unique_ptr<btTriangleMesh> triangle_mesh(new btTriangleMesh (true, false));
 
-          btShapeHull hull(convex_shape.get());
+          triangle_mesh->preallocateIndices(indices.size());
+          triangle_mesh->preallocateVertices(vertices.size());
 
-          const float MARGIN = 0.5f;
+          const math::vec3f* vertex = &vertices[0];
+          size_t vertices_count = vertices.size();
+      
+          for (size_t i=0; i<vertices_count; i++, vertex++)
+            triangle_mesh->findOrAddVertex(btVector3((*vertex)[0], (*vertex)[1], (*vertex)[2]), false);
+          
+          index = &indices[0];
 
-          if (!hull.buildHull(MARGIN))
-            throw Exception::format("buildHull failed for '%s'", primitive.name.c_str());
+          for (size_t i=0, count=indices.size(); i<count; i++, index++)
+            triangle_mesh->addIndex(*index);
 
-          shape = std::make_shared<btConvexHullShape>(&hull.getVertexPointer()[0][0], hull.numVertices());
+          triangle_mesh->getIndexedMeshArray()[0].m_numTriangles += primitive.count;
+
+          engine_log_debug("btBvhTriangleMeshShape phys mesh shape '%s' (%u vertices, %u indices)", primitive.name.c_str(), vertices.size(), indices.size());
+
+          shape = std::shared_ptr<btCollisionShape>(new btBvhTriangleMeshShape(triangle_mesh.get(), true, true));
 
           convex_shapes.insert(primitive.name.c_str(), shape);
         }
 
-        //std::make_shared<PhysBodySync>(body, mesh)
+        /// Create Dynamic Objects
+        btTransform start_transform;
+        start_transform.setIdentity();
+
+        btScalar mass(LEAF_MASS);
+
+        //rigidbody is dynamic if and only if mass is non zero, otherwise static
+        bool isDynamic = (mass != 0.f);
+
+        btVector3 local_inertia(0, 0, 0);
+        if (isDynamic)
+            shape->calculateLocalInertia(mass, local_inertia); //TODO: optimize, out
+
+        start_transform.setOrigin(btVector3(position[0], position[1], position[2]));
+        start_transform.setRotation(btQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]));
+
+        //engine_log_debug("shape=%p", shape.get());
+
+        //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
+        btDefaultMotionState* my_motion_state = new btDefaultMotionState(start_transform);
+        btRigidBody::btRigidBodyConstructionInfo rb_info(mass, my_motion_state, shape.get(), local_inertia);
+        std::shared_ptr<btRigidBody> body(new btRigidBody(rb_info));
+
+        dynamics_world->addRigidBody(body.get());
+
+        phys_bodies.push_back(std::make_shared<PhysBodySync>(body, mesh));
       }
     }
-
-    node->set_position(position);
-    node->set_orientation(rotation);
-    node->set_scale(math::vec3f(0.2f));
-    node->bind_to_parent(*scene_root);
   }
 
   void generate_droplet()
@@ -271,7 +318,7 @@ struct World::Impl
     mesh->set_scale(math::vec3f(DROPLET_PARTICLE_RADIUS));
     mesh->bind_to_parent(*scene_root);
 
-    droplet_particles.push_back(std::make_shared<PhysBodySync>(body, mesh));
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(body, mesh));
   }
 
   void update()
@@ -282,11 +329,12 @@ struct World::Impl
 
       //sync debug droplet particles
 
-    for (std::shared_ptr<PhysBodySync>& particle : droplet_particles)
+    for (std::shared_ptr<PhysBodySync>& particle : phys_bodies)
     {
       btTransform transform;
       particle->body->getMotionState()->getWorldTransform(transform);
       particle->mesh->set_position(math::vec3f(transform.getOrigin().getX(), transform.getOrigin().getY(), transform.getOrigin().getZ()));
+      particle->mesh->set_orientation(math::quatf(transform.getRotation().getX(), transform.getRotation().getY(), transform.getRotation().getZ(), transform.getRotation().getW()));
     }
   }
 };
