@@ -16,7 +16,7 @@ using namespace engine;
 
 const char* LEAF_MESH = "media/meshes/leaf.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.1f;
-const float DROPLET_PARTICLE_MASS = 1.f;
+const float DROPLET_PARTICLE_MASS = 0.1f;
 const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 10.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
 const float GROUND_SIZE = 50.0f;
@@ -79,6 +79,13 @@ struct Leaf
   btTransform target_transform;
 };
 
+struct Droplet
+{
+  math::vec3f center;
+  std::vector<math::vec3f> points;
+  std::vector<std::shared_ptr<PhysBodySync>> bodies;
+};
+
 void find_nearest_point(
   media::geometry::Mesh& mesh,
   const media::geometry::Primitive& primitive1,
@@ -128,6 +135,8 @@ struct World::Impl
   math::vec3f droplet_particle_local_intertia;
   common::NamedDictionary<std::shared_ptr<btCollisionShape>> convex_shapes;
   std::vector<Leaf> leaves;
+  std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
+  std::vector<std::shared_ptr<Droplet>> droplets;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -386,6 +395,8 @@ struct World::Impl
     mesh->bind_to_parent(*scene_root);
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, dynamics_world));
+
+    droplet_particles.push_back(phys_bodies.back());
   }
 
   void update()
@@ -421,7 +432,94 @@ struct World::Impl
       body->applyTorque(torque);
     }
 
-      //sync debug droplet particles
+      //update droplets
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      droplet->points.clear();
+    }
+
+    for (std::shared_ptr<PhysBodySync>& particle : droplet_particles)
+    {
+      btVector3 bt_position = particle->body->getWorldTransform().getOrigin();
+      math::vec3f position(bt_position.getX(), bt_position.getY(), bt_position.getZ());
+      bool added = false;
+
+      for (std::shared_ptr<Droplet>& droplet : droplets)
+      {
+        float distance = length(droplet->center - position);
+
+        static const float DROPLET_RADIUS = 2.f;
+
+        if (distance < DROPLET_RADIUS)
+        {
+          droplet->points.push_back(position);
+          droplet->bodies.push_back(particle);
+          added = true;
+          break;
+        }
+      }
+
+      if (!added)
+      {
+        std::shared_ptr<Droplet> droplet = std::make_shared<Droplet>();
+
+        droplet->center = position;
+        droplet->points.push_back(position);
+        droplet->bodies.push_back(particle);
+
+        droplets.push_back(droplet);
+      }
+    }
+
+    engine_log_debug("Droplets count: %d", droplets.size());
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      math::vec3f center(0.0f);
+
+      if (droplet->points.empty())
+      {
+        droplet->center = center;
+        continue;
+      }
+      
+      for (const math::vec3f& point : droplet->points)
+        center += point;
+      
+      droplet->center = center / droplet->points.size();
+
+      engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
+    }
+
+    droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->points.empty(); }),
+      droplets.end());
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      for (std::shared_ptr<PhysBodySync>& particle : droplet->bodies)
+      {
+        btVector3 bt_position = particle->body->getWorldTransform().getOrigin();
+        math::vec3f position(bt_position.getX(), bt_position.getY(), bt_position.getZ());
+        math::vec3f velocity(particle->body->getLinearVelocity().getX(), particle->body->getLinearVelocity().getY(), particle->body->getLinearVelocity().getZ());
+
+        static const float TIME_STEP = 0.01f;
+        static const float DROPLET_RADIUS = 1.5f;
+        static const float DROPLET_FORCE = 0.04f;
+        static const float EPSILON = 0.001f;
+
+        math::vec3f force = droplet->center - (position + velocity * TIME_STEP);
+        float distance = length(force);
+
+        if (distance < DROPLET_RADIUS && distance > EPSILON)
+        {
+          force = normalize(force) * (DROPLET_RADIUS - distance) / DROPLET_RADIUS * DROPLET_FORCE;
+          particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
+        }
+      }
+    }
+
+      //sync bodies with scene
 
     for (std::shared_ptr<PhysBodySync>& particle : phys_bodies)
     {

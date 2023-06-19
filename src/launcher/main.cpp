@@ -176,7 +176,7 @@ int main(void)
     {
       scene::PointLight::Pointer light = scene::PointLight::create();
 
-      point_lights_center_positions.push_back(math::vec3f(LIGHTS_POSITION_RADIUS * cos(math::constf::pi * 2.f * i / count), 5.f, LIGHTS_POSITION_RADIUS * sin(math::constf::pi * 2.f * i / count)));
+      point_lights_center_positions.push_back(math::vec3f(LIGHTS_POSITION_RADIUS * cos(math::constf::pi * 2.f * i / count), 0.f, LIGHTS_POSITION_RADIUS * sin(math::constf::pi * 2.f * i / count)));
 
       light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
       light->set_attenuation(LIGHTS_ATTENUATION);
