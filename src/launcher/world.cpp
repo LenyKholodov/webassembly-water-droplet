@@ -16,11 +16,11 @@ using namespace engine;
 
 const char* LEAF_MESH = "media/meshes/leaf.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.1f;
-const float DROPLET_PARTICLE_MASS = 0.1f;
-const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 5.0f;
+const float DROPLET_PARTICLE_MASS = 1.f;
+const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 10.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
 const float GROUND_SIZE = 50.0f;
-const float GROUND_OFFSET = 0;
+const float GROUND_OFFSET = -70.f;
 const float LEAF_MASS = 1.0f;
 
 //todo: remove motion states from rigid bodies
@@ -40,15 +40,73 @@ float crand(float min=-1.0f, float max=1.0f)
 
 struct PhysBodySync
 {
+  std::shared_ptr<btDiscreteDynamicsWorld> dynamics_world;
+  std::shared_ptr<btCollisionShape> shape;
+  std::shared_ptr<btDefaultMotionState> motion_state;
   std::shared_ptr<btRigidBody> body;
   scene::Mesh::Pointer mesh;
 
-  PhysBodySync(const std::shared_ptr<btRigidBody>& body, const scene::Mesh::Pointer& mesh)
-    : body(body)
-    , mesh(mesh)
+  PhysBodySync(
+    const std::shared_ptr<btCollisionShape>& shape,
+    float mass,
+    const math::vec3f& local_intertia,
+    const math::vec3f& position,
+    const math::quatf& rotation,
+    const scene::Mesh::Pointer& mesh,
+    const std::shared_ptr<btDiscreteDynamicsWorld>& dynamics_world)
+    : mesh(mesh)
+    , shape(shape)
   {
-  }
+    btTransform start_transform;
+    start_transform.setIdentity();
+    start_transform.setOrigin(btVector3(position[0], position[1], position[2]));
+    start_transform.setRotation(btQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]));
+
+    motion_state = std::make_shared<btDefaultMotionState>(start_transform);
+
+    btRigidBody::btRigidBodyConstructionInfo rb_info(mass, motion_state.get(), shape.get(), btVector3(local_intertia[0], local_intertia[1], local_intertia[2]));
+    body = std::make_shared<btRigidBody>(rb_info);
+
+    dynamics_world->addRigidBody(body.get());
+  }  
 };
+
+struct Leaf
+{
+  std::shared_ptr<PhysBodySync> phys_body;
+  std::shared_ptr<btRigidBody> static_bind_body;
+  std::shared_ptr<btTypedConstraint> constraint;
+  btTransform target_transform;
+};
+
+void find_nearest_point(
+  media::geometry::Mesh& mesh,
+  const media::geometry::Primitive& primitive1,
+  const media::geometry::Primitive& primitive2,
+  math::vec3f& out_point1,
+  float& nearest_distance)
+{
+  const media::geometry::Mesh::index_type* index1 = mesh.indices_data() + primitive1.first * 3;
+  const media::geometry::Vertex* verts1 = mesh.vertices_data() + primitive1.base_vertex;
+
+  for (size_t i=0, ind_count1=primitive1.count * 3; i<ind_count1; ++i, ++index1)
+  {
+    const media::geometry::Mesh::index_type* index2 = mesh.indices_data() + primitive2.first * 3;
+    const media::geometry::Vertex* verts2 = mesh.vertices_data() + primitive2.base_vertex;
+    const math::vec3f& p1 = verts1[*index1].position;
+
+    for (size_t j=0, ind_count2=primitive2.count * 3; j<ind_count2; ++j, ++index2)
+    {
+      const math::vec3f& p2 = verts2[*index2].position;
+      float distance = math::qlen(p1 - p2);
+      if (distance < nearest_distance)
+      {
+        nearest_distance = distance;
+        out_point1 = p1;
+      }
+    }
+  }
+}
 
 }
 
@@ -63,10 +121,13 @@ struct World::Impl
   std::shared_ptr<btDiscreteDynamicsWorld> dynamics_world;
   std::shared_ptr<btCollisionShape> ground_shape;
   std::shared_ptr<btCollisionShape> droplet_particle_shape;
+  std::shared_ptr<btCollisionShape> static_bind_shape;
   std::shared_ptr<btRigidBody> ground_body;
   std::vector<std::shared_ptr<PhysBodySync>> phys_bodies;
   media::geometry::Mesh droplet_debug_particle_mesh;
+  math::vec3f droplet_particle_local_intertia;
   common::NamedDictionary<std::shared_ptr<btCollisionShape>> convex_shapes;
+  std::vector<Leaf> leaves;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -76,7 +137,7 @@ struct World::Impl
     , broadphase(new btDbvtBroadphase())
     , solver(new btSequentialImpulseConstraintSolver())
     , dynamics_world(new btDiscreteDynamicsWorld(dispatcher.get(), broadphase.get(), solver.get(), collision_configuration.get()))
-    , droplet_debug_particle_mesh(media::geometry::MeshFactory::create_sphere("mtl1", 1.0f))
+    , droplet_debug_particle_mesh(media::geometry::MeshFactory::create_sphere("mtl1", DROPLET_PARTICLE_RADIUS))
   {
       //load materials
 
@@ -112,14 +173,20 @@ struct World::Impl
 
       //create leaves
 
-     add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(45.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
-     add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-45.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+     //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
+     add_stem(math::vec3f(-30.0f, 0.0f, 30.0f), to_quat(math::rotate(math::degree(65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+     //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
 
       //configure physics
 
     dynamics_world->setGravity(btVector3(0, -10, 0));
 
     droplet_particle_shape.reset(new btSphereShape(btScalar(DROPLET_PARTICLE_RADIUS)));
+    static_bind_shape.reset(new btSphereShape(btScalar(0.01f)));
+
+    btVector3 bt_local_inertia(0, 0, 0);
+    droplet_particle_shape->calculateLocalInertia(DROPLET_PARTICLE_MASS, bt_local_inertia);
+    droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
 
     setup_ground();
 
@@ -130,36 +197,23 @@ struct World::Impl
 
   void setup_ground()
   {
+      //graphics
+
+    scene::Mesh::Pointer floor = scene::Mesh::create();
+    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", GROUND_SIZE, 0.01f, GROUND_SIZE);
+
+    floor->set_mesh(floor_mesh);
+    floor->bind_to_parent(*scene_root);
+
+      //physics
+
     ground_shape.reset(new btBoxShape(btVector3(btScalar(GROUND_SIZE), btScalar(0.1f), btScalar(GROUND_SIZE))));
 
     btTransform ground_transform;
     ground_transform.setIdentity();
     ground_transform.setOrigin(btVector3(0, GROUND_OFFSET, 0));
 
-    btScalar mass(0.);
-
-    //rigidbody is dynamic if and only if mass is non zero, otherwise static
-    bool is_dynamic = (mass != 0.f);
-
-    btVector3 local_inertia(0, 0, 0);
-    if (is_dynamic)
-        ground_shape->calculateLocalInertia(mass, local_inertia);
-
-    //using motionstate is optional, it provides interpolation capabilities, and only synchronizes 'active' objects
-    btDefaultMotionState* my_motion_state = new btDefaultMotionState(ground_transform);
-    btRigidBody::btRigidBodyConstructionInfo rb_info(mass, my_motion_state, ground_shape.get(), local_inertia);
-
-    ground_body.reset(new btRigidBody(rb_info));
-
-    //add the body to the dynamics world
-    dynamics_world->addRigidBody(ground_body.get());
-
-    scene::Mesh::Pointer floor = scene::Mesh::create();
-    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", GROUND_SIZE, 0.01f, GROUND_SIZE);
-
-    floor->set_mesh(floor_mesh);
-    floor->set_position(math::vec3f(ground_transform.getOrigin().getX(), ground_transform.getOrigin().getY(), ground_transform.getOrigin().getZ()));
-    floor->bind_to_parent(*scene_root);
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(ground_shape, 0.f, math::vec3f(0.0f), math::vec3f(0, GROUND_OFFSET, 0), math::quatf(), floor, dynamics_world));
   }
 
   void add_stem(const math::vec3f& position, const math::quatf& rotation)
@@ -249,32 +303,67 @@ struct World::Impl
           convex_shapes.insert(primitive.name.c_str(), shape);
         }
 
-        /// Create Dynamic Objects
+          //create leaf
+
+        btVector3 bt_local_inertia(1, 1, 1);
+        bt_local_inertia *= LEAF_MASS;
+        math::vec3f local_inertia(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
+
+        phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, position, rotation, mesh, dynamics_world));
+
+          //find pivot point for constraint
+
+        math::vec3f pivot_point(0, 0, 0);
+        float nearest_distance = 1.e06f;
+
+        for (size_t j=0, count=leaf_model.mesh.primitives_count(); j<count; j++)
+        {
+          const media::geometry::Primitive& primitive2 = leaf_model.mesh.primitive(j);
+
+          if (&primitive == &primitive2)
+            continue;
+
+          if (primitive2.type != PrimitiveType_TriangleList)
+            continue;
+
+          if (primitive2.name.find("leaf_") != 0)
+            continue;
+
+          find_nearest_point(leaf_model.mesh, primitive, primitive2, pivot_point, nearest_distance);
+        }
+
+          //configure leaf constraint
+
+        Leaf leaf;
+
+        leaf.phys_body = phys_bodies.back();
+        leaf.target_transform = leaf.phys_body->body->getWorldTransform();
+
+        bt_local_inertia = btVector3(0, 0, 0);
+
         btTransform start_transform;
         start_transform.setIdentity();
 
-        btScalar mass(LEAF_MASS);
+        btVector3 static_body_bind_pos = btVector3(pivot_point[0], pivot_point[1], pivot_point[2]);
+        start_transform.setOrigin(static_body_bind_pos);
 
-        //rigidbody is dynamic if and only if mass is non zero, otherwise static
-        bool isDynamic = (mass != 0.f);
+        start_transform = leaf.phys_body->body->getWorldTransform() * start_transform;
 
-        btVector3 local_inertia(0, 0, 0);
-        if (isDynamic)
-            shape->calculateLocalInertia(mass, local_inertia); //TODO: optimize, out
+        btRigidBody::btRigidBodyConstructionInfo rb_info(0.0f, nullptr, static_bind_shape.get(), bt_local_inertia);
+        rb_info.m_startWorldTransform = start_transform;
+        leaf.static_bind_body = std::make_shared<btRigidBody>(rb_info);
 
-        start_transform.setOrigin(btVector3(position[0], position[1], position[2]));
-        start_transform.setRotation(btQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]));
+        dynamics_world->addRigidBody(leaf.static_bind_body.get());
 
-        //engine_log_debug("shape=%p", shape.get());
+        btVector3 static_bind_anchor(0, 0, 0);
+        btVector3 leaf_anchor(pivot_point[0], pivot_point[1], pivot_point[2]);
 
-        //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
-        btDefaultMotionState* my_motion_state = new btDefaultMotionState(start_transform);
-        btRigidBody::btRigidBodyConstructionInfo rb_info(mass, my_motion_state, shape.get(), local_inertia);
-        std::shared_ptr<btRigidBody> body(new btRigidBody(rb_info));
+        leaf.constraint = std::make_shared<btPoint2PointConstraint>(*leaf.phys_body->body, *leaf.static_bind_body,
+          leaf_anchor, static_bind_anchor);
 
-        dynamics_world->addRigidBody(body.get());
+        dynamics_world->addConstraint(leaf.constraint.get(), true);
 
-        phys_bodies.push_back(std::make_shared<PhysBodySync>(body, mesh));
+        leaves.push_back(leaf);
       }
     }
   }
@@ -283,43 +372,20 @@ struct World::Impl
   {
     for (size_t i=0; i<DROPLET_GENERATION_PARTICLES_COUNT; i++)
     {
-      btVector3 offset(0, 10.0f + crand() * DROPLET_GENERATION_RADIUS, 0);
+      math::vec3f offset(0, 10.0f + crand() * DROPLET_GENERATION_RADIUS, 0);
 
       generate_droplet_particle(offset);
     }
   }
 
-  void generate_droplet_particle(const btVector3& offset)
+  void generate_droplet_particle(const math::vec3f& offset)
   {
-    /// Create Dynamic Objects
-    btTransform start_transform;
-    start_transform.setIdentity();
-
-    btScalar mass(DROPLET_PARTICLE_MASS);
-
-    //rigidbody is dynamic if and only if mass is non zero, otherwise static
-    bool isDynamic = (mass != 0.f);
-
-    btVector3 local_inertia(0, 0, 0);
-    if (isDynamic)
-        droplet_particle_shape->calculateLocalInertia(mass, local_inertia); //TODO: optimize, out
-
-    start_transform.setOrigin(offset);
-
-    //using motionstate is recommended, it provides interpolation capabilities, and only synchronizes 'active' objects
-    btDefaultMotionState* my_motion_state = new btDefaultMotionState(start_transform);
-    btRigidBody::btRigidBodyConstructionInfo rb_info(mass, my_motion_state, droplet_particle_shape.get(), local_inertia);
-    std::shared_ptr<btRigidBody> body(new btRigidBody(rb_info));
-
-    dynamics_world->addRigidBody(body.get());
-
     scene::Mesh::Pointer mesh = scene::Mesh::create();
 
     mesh->set_mesh(droplet_debug_particle_mesh);
-    mesh->set_scale(math::vec3f(DROPLET_PARTICLE_RADIUS));
     mesh->bind_to_parent(*scene_root);
 
-    phys_bodies.push_back(std::make_shared<PhysBodySync>(body, mesh));
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, dynamics_world));
   }
 
   void update()
@@ -327,6 +393,33 @@ struct World::Impl
       //step the simulation
 
     dynamics_world->stepSimulation(1.f / 60.f, 10);
+
+      //update leaves
+
+    for (Leaf& leaf : leaves)
+    {
+      btRigidBody* body = leaf.phys_body->body.get();
+      float inv_mass = body->getInvMass();
+      float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
+
+      static const float TIME_STEP = 0.01f;
+      static const float FORCE_FACTOR = 0.1f;
+      static const float TORQUE_FACTOR = 0.01f;
+
+      btVector3 linear_velocity, angular_velocity;
+
+      btTransformUtil::calculateVelocity(body->getWorldTransform(), leaf.target_transform, TIME_STEP,
+        linear_velocity, angular_velocity);
+
+      linear_velocity -= body->getLinearVelocity();
+      angular_velocity -= body->getAngularVelocity();
+
+      btVector3 force = mass * linear_velocity / TIME_STEP * FORCE_FACTOR,
+                torque = mass * angular_velocity / TIME_STEP * TORQUE_FACTOR;
+
+      body->applyCentralForce(force);
+      body->applyTorque(torque);
+    }
 
       //sync debug droplet particles
 
