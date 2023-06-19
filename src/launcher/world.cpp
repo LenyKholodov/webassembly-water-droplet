@@ -5,7 +5,7 @@
 #include <math/utility.h>
 
 #include "btBulletDynamicsCommon.h"
-#include "BulletCollision/CollisionShapes/btShapeHull.h"
+#include "BulletCollision/Gimpact/btGImpactShape.h"
 
 using namespace engine::common;
 using namespace engine::render::scene;
@@ -182,9 +182,9 @@ struct World::Impl
       mesh->set_orientation(rotation);
       mesh->bind_to_parent(*scene_root);
 
-      if (primitive.name.find("leaf") == 0)
+      if (primitive.name.find("leave_") == 0)
       {
-        //primitive name starts from "leaf"
+          //primitive name starts from "leaf"
 
         engine_log_debug("leaf found '%s'", primitive.name.c_str());
 
@@ -243,7 +243,8 @@ struct World::Impl
 
           engine_log_debug("btBvhTriangleMeshShape phys mesh shape '%s' (%u vertices, %u indices)", primitive.name.c_str(), vertices.size(), indices.size());
 
-          shape = std::shared_ptr<btCollisionShape>(new btBvhTriangleMeshShape(triangle_mesh.get(), true, true));
+          shape = std::shared_ptr<btCollisionShape>(new btBvhTriangleMeshShape(triangle_mesh.release(), true, true));
+          //shape = std::shared_ptr<btCollisionShape>(new btGImpactMeshShape(triangle_mesh.release()));
 
           convex_shapes.insert(primitive.name.c_str(), shape);
         }
@@ -332,9 +333,20 @@ struct World::Impl
     for (std::shared_ptr<PhysBodySync>& particle : phys_bodies)
     {
       btTransform transform;
-      particle->body->getMotionState()->getWorldTransform(transform);
+
+      if (particle->body && particle->body->getMotionState())
+      {
+        particle->body->getMotionState()->getWorldTransform(transform);
+      }
+      else
+      {
+        transform = particle->body->getWorldTransform();
+      }
+
       particle->mesh->set_position(math::vec3f(transform.getOrigin().getX(), transform.getOrigin().getY(), transform.getOrigin().getZ()));
       particle->mesh->set_orientation(math::quatf(transform.getRotation().getX(), transform.getRotation().getY(), transform.getRotation().getZ(), transform.getRotation().getW()));
+
+	  //engine_log_debug("world pos object = %f,%f,%f\n", float(transform.getOrigin().getX()), float(transform.getOrigin().getY()), float(transform.getOrigin().getZ())); 
     }
   }
 };
