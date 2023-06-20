@@ -127,6 +127,44 @@ struct Texture::Impl
 
         break;
       }
+      case 6:
+      {
+        target = GL_TEXTURE_CUBE_MAP;
+
+        bind();
+
+        volatile size_t computed_mips_count = get_mips_count(width, height);
+
+        if (mips_count > computed_mips_count || mips_count == (size_t)-1)
+          mips_count = computed_mips_count;
+
+        engine_check(mips_count < 100 && mips_count >= 0);
+
+        GLint level_width = static_cast<GLint>(width);
+        GLint level_height = static_cast<GLint>(height);
+
+        static const GLenum cube_map_targets[] = {
+          GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+          GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+          GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+          GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+          GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+          GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+        };
+        static const size_t cube_map_targets_count = sizeof(cube_map_targets) / sizeof(cube_map_targets[0]);
+        
+        for (GLint level=0; level<mips_count; level++)
+        {
+          for (size_t i=0; i<cube_map_targets_count; i++)            
+            glTexImage2D(cube_map_targets[i], level, gl_internal_format, level_width, level_height, 0,
+              gl_uncompressed_format, gl_uncompressed_type, nullptr);
+
+          level_width = level_width > 1 ? level_width / 2 : 1;
+          level_height = level_height > 1 ? level_height / 2 : 1;
+        }
+
+        break;
+      }
       default:
         engine_check(layers == 1); //no support of other textures for now
         break;
