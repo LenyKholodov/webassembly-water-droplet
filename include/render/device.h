@@ -726,6 +726,9 @@ class Device
     /// Create texture2d
     Texture create_texture2d(size_t width, size_t height, PixelFormat format, size_t mips_count = 100);
 
+    /// Create texture cubemap
+    Texture create_texture_cubemap(size_t width, size_t height, PixelFormat format, size_t mips_count = 100);
+
     /// Load texture2d
     Texture create_texture2d(const char* image_path, size_t mips_count = 100);
 

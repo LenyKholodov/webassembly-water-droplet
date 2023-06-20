@@ -13,6 +13,7 @@ static constexpr size_t RESERVED_MESHES_COUNT = 1024;
 static constexpr size_t RESERVED_POINT_LIGHTS_COUNT = 256;
 static constexpr size_t RESERVED_SPOT_LIGHTS_COUNT = 256;
 static constexpr size_t RESERVED_PROJECTILES_COUNT = 16;
+static constexpr size_t RESERVED_PRERENDERS_COUNT = 16;
 
 /// Scene visitor implementation details
 struct SceneVisitor::Impl
@@ -21,6 +22,7 @@ struct SceneVisitor::Impl
   PointLightArray point_lights;
   SpotLightArray spot_lights;
   ProjectileArray projectiles;
+  EntityArray prerender_entities;
 
   Impl()
   {
@@ -28,6 +30,7 @@ struct SceneVisitor::Impl
     point_lights.reserve(RESERVED_POINT_LIGHTS_COUNT);
     spot_lights.reserve(RESERVED_SPOT_LIGHTS_COUNT);
     projectiles.reserve(RESERVED_PROJECTILES_COUNT);
+    prerender_entities.reserve(RESERVED_PRERENDERS_COUNT);
   }
 };
 
@@ -57,12 +60,18 @@ const ProjectileArray& SceneVisitor::projectiles() const
   return impl->projectiles;
 }
 
+const EntityArray& SceneVisitor::prerender_entities() const
+{
+  return impl->prerender_entities;
+}
+
 void SceneVisitor::reset()
 {
   impl->meshes.clear();
   impl->point_lights.clear();
   impl->spot_lights.clear();
   impl->projectiles.clear();
+  impl->prerender_entities.clear();
 }
 
 void SceneVisitor::traverse(Node& node)
@@ -73,6 +82,12 @@ void SceneVisitor::traverse(Node& node)
 void SceneVisitor::visit(engine::scene::Mesh& node)
 {
   impl->meshes.push_back(engine::scene::Mesh::Pointer(node.shared_from_this(), &node));
+}
+
+void SceneVisitor::visit(engine::scene::Entity& node)
+{
+  if (node.is_environment_map_required())
+    impl->prerender_entities.push_back(engine::scene::Entity::Pointer(node.shared_from_this(), &node));
 }
 
 void SceneVisitor::visit(SpotLight& node)

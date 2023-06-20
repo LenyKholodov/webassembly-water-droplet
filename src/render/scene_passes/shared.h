@@ -19,6 +19,7 @@ namespace render {
 namespace scene {
 namespace passes {
 
+typedef std::vector<engine::scene::Entity::Pointer> EntityArray;
 typedef std::vector<engine::scene::Mesh::Pointer> MeshArray;
 typedef std::vector<engine::scene::PointLight::Pointer> PointLightArray;
 typedef std::vector<engine::scene::SpotLight::Pointer> SpotLightArray;
@@ -78,6 +79,73 @@ struct Shadow
   }
 };
 
+/// Portal
+struct Portal
+{
+  low_level::Texture portal_texture;
+  low_level::RenderBuffer depth_render_buffer;
+  low_level::Pass portal_pass;
+  low_level::FrameBuffer portal_frame_buffer;
+
+  Portal(
+    engine::render::low_level::Device& device,
+    const low_level::Program& program,
+    const low_level::Texture& portal_texture,
+    size_t layer,
+    const low_level::RenderBuffer& depth_render_buffer)
+    : portal_texture(portal_texture)
+    , depth_render_buffer(depth_render_buffer)
+    , portal_pass(device.create_pass(program))
+    , portal_frame_buffer(device.create_frame_buffer())
+  {
+    portal_frame_buffer.attach_color_target(portal_texture, layer, 0);
+    portal_frame_buffer.attach_depth_buffer(depth_render_buffer);
+    portal_frame_buffer.set_viewport(low_level::Viewport(0, 0, (int)portal_texture.width(), (int)portal_texture.height()));
+
+    portal_pass.set_frame_buffer(portal_frame_buffer);
+    portal_pass.set_depth_stencil_state(low_level::DepthStencilState(true, true, low_level::CompareMode_Less));
+  }
+};
+
+/// Environment map
+struct EnvironmentMap
+{
+  low_level::Texture portal_texture;
+  low_level::RenderBuffer depth_render_buffer;
+  FrameNode portal_frame;
+  std::vector<std::shared_ptr<Portal>> portals;
+
+  static constexpr size_t PORTAL_TEXTURE_SIZE = 512;
+
+  EnvironmentMap(
+    engine::render::low_level::Device& device,
+    const low_level::Program& program,
+    size_t portal_texture_size)
+    : portal_texture(device.create_texture_cubemap(portal_texture_size, portal_texture_size, low_level::PixelFormat_RGBA8, 1))
+    , depth_render_buffer(device.create_render_buffer(portal_texture_size, portal_texture_size, low_level::PixelFormat_D16))
+  {
+    portal_texture.set_min_filter(low_level::TextureFilter_Linear);
+
+    for (size_t i = 0; i < 6; ++i)
+    {
+      portals.push_back(std::make_shared<Portal>(device, program, portal_texture, i, depth_render_buffer));
+      portal_frame.add_pass(portals.back()->portal_pass);
+    }
+  }
+
+  static EnvironmentMap* get(engine::scene::Entity& entity, ScenePassContext& context, const low_level::Program& program)
+  {
+    EnvironmentMap* environment_map = entity.find_user_data<EnvironmentMap>();
+
+    if (!environment_map)
+    {
+      environment_map = &entity.set_user_data(EnvironmentMap(context.device(), program, PORTAL_TEXTURE_SIZE));
+    }
+
+    return environment_map;
+  }
+};
+
 /// Projectile render data
 struct RenderableProjectile
 {
@@ -124,6 +192,9 @@ class SceneVisitor : private engine::scene::ISceneVisitor
     /// Projectiles
     const ProjectileArray& projectiles() const;
 
+    /// Nodes with prerenderings
+    const EntityArray& prerender_entities() const;
+
     /// Reset results
     void reset();
 
@@ -132,6 +203,7 @@ class SceneVisitor : private engine::scene::ISceneVisitor
 
   private:
     void visit(engine::scene::Mesh&) override;
+    void visit(engine::scene::Entity&) override;
     void visit(engine::scene::SpotLight&) override;
     void visit(engine::scene::PointLight&) override;
     void visit(engine::scene::Projectile&) override;

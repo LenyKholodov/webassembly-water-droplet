@@ -6,8 +6,35 @@
 namespace engine {
 namespace scene {
 
+/// Entity
+class Entity: public Node
+{
+  public:
+    typedef std::shared_ptr<Entity> Pointer;
+
+    /// Environment maps
+    bool is_environment_map_required() const;
+
+    /// Set environment maps requirement
+    void set_environment_map_required(bool state);    
+
+  protected:
+    /// Constructor
+    Entity();
+
+    /// Destructor
+    ~Entity();
+
+    /// Visit node
+    void visit(ISceneVisitor&) override;
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
+
 /// Mesh
-class Mesh: public Node
+class Mesh: public Entity
 {
   public:
     typedef std::shared_ptr <Mesh> Pointer;

@@ -321,6 +321,16 @@ void Texture::get_level_info(size_t layer, size_t level, TextureLevelInfo& out_i
       out_info.height = level_height;
       break;
     }
+    case 6:
+    {
+      engine_check(layer < 6);
+
+      out_info.target = GL_TEXTURE_CUBE_MAP_POSITIVE_X + layer;
+      out_info.texture_id = impl->texture_id;
+      out_info.width = level_width;
+      out_info.height = level_height;
+      break;
+    }    
     default:
       unimplemented(); //cubemaps are not supported for now
   }

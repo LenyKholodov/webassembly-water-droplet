@@ -55,7 +55,7 @@ size_t Mesh::primitives_count() const
 
 void Mesh::visit(ISceneVisitor& visitor)
 {
-  Node::visit(visitor);
+  Entity::visit(visitor);
 
   visitor.visit(*this);
 }

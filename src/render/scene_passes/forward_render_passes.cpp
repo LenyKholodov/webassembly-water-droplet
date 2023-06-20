@@ -43,6 +43,24 @@ struct ForwardLightingPass : IScenePass
       //deps.push_back("Projectile Maps Rendering");
     }
 
+    void prerender(ScenePassContext& context)
+    {
+      for (auto entity : visitor.prerender_entities())
+      {
+        if (entity->is_environment_map_required())
+          prerender_environment_map(*entity, context);
+      }
+    }
+
+    void prerender_environment_map(Entity& entity, ScenePassContext& context)
+    {
+        //create envmap data
+
+      EnvironmentMap* envmap = EnvironmentMap::get(entity, context, forward_lighting_program);
+
+      //todo: mirrors rendering
+    }
+
     void render(ScenePassContext& context)
     {
         //traverse scene
@@ -57,6 +75,10 @@ struct ForwardLightingPass : IScenePass
         //traverse scene
 
       visitor.traverse(*root_node);
+
+        //prerendering
+
+      prerender(context);
 
         //configure params
 

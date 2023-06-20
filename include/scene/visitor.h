@@ -7,6 +7,7 @@ namespace scene {
 class Node;
 class Camera;
 class PerspectiveCamera;
+class Entity;
 class Mesh;
 class Light;
 class SpotLight;
@@ -19,6 +20,7 @@ class ISceneVisitor
 {
   public:
     virtual void visit(Node&) {}
+    virtual void visit(Entity&) {}
     virtual void visit(Camera&) {}
     virtual void visit(PerspectiveCamera&) {}
     virtual void visit(Mesh&) {}
