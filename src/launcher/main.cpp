@@ -2,6 +2,7 @@
 #include <scene/mesh.h>
 #include <scene/light.h>
 #include <media/image.h>
+#include <media/sound_player.h>
 #include <application/application.h>
 #include <application/window.h>
 #include <common/exception.h>
@@ -24,6 +25,7 @@ using namespace engine::scene;
 using namespace engine::application;
 using namespace engine::scene;
 using namespace engine;
+using namespace engine::media::sound;
 
 namespace
 {
@@ -71,11 +73,14 @@ int main(void)
     math::anglef camera_yaw(math::degree(0.f));
     math::anglef camera_roll(math::degree(0.f));
     math::vec3f camera_move_direction(0.f);
+    SoundPlayer sound_player;
 
     Application app;
     Window window("Render test", 1280, 720);
 
     window.set_keyboard_handler([&](Key key, bool pressed) {
+      sound_player.play_music();
+
       math::vec3f direction_change;
 
       bool camera_position_changed = false;
@@ -140,6 +145,10 @@ int main(void)
 
     window.set_mouse_button_handler([&](MouseButton button, bool pressed) {
       //engine_log_info("mouse button=%d pressed=%d", button, pressed);
+      sound_player.play_music();
+
+      if (pressed)
+        sound_player.play_sound(SoundId::drop);
 
       if (button == MouseButton_Left)
         left_mouse_button_pressed = pressed;
