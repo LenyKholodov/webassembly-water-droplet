@@ -543,7 +543,7 @@ struct World::Impl
 
         static const float TIME_STEP = 0.01f;
         static const float DROPLET_RADIUS = 1.5f;
-        static const float DROPLET_FORCE = 0.01f;
+        static const float DROPLET_FORCE = 0.003f;
         static const float EPSILON = 0.001f;
 
         math::vec3f force = droplet->center - (position + velocity * TIME_STEP);
