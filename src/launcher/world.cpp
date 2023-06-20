@@ -7,7 +7,7 @@
 #include "btBulletDynamicsCommon.h"
 #include "BulletCollision/Gimpact/btGImpactShape.h"
 
-#include "hull.h"
+#include "hull/hull.h"
 
 using namespace engine::common;
 using namespace engine::render::scene;

@@ -74,6 +74,26 @@ struct engine::render::low_level::BufferImpl
 
     context->check_errors();
   }
+
+  void resize(size_t new_count)
+  {
+    if (new_count == count)
+      return;
+
+    context->make_current();
+
+    glBindBuffer(target, vbo_id);
+
+    const GLenum usage_mode = GL_STATIC_DRAW; //TODO: add as parameter
+
+    engine_log_debug("resize buffer %u -> %u; elsize=%u", count, new_count, element_size);
+
+    glBufferData(target, new_count * element_size, nullptr, usage_mode); 
+
+    context->check_errors();
+
+    count = new_count;
+  }
 };
 
 ///
@@ -100,6 +120,11 @@ void VertexBuffer::bind() const
   impl->bind();
 }
 
+void VertexBuffer::resize(size_t new_count)
+{
+  impl->resize(new_count);
+}
+
 ///
 /// IndexBuffer
 ///
@@ -122,4 +147,9 @@ void IndexBuffer::set_data(size_t offset, size_t count, const index_type* indice
 void IndexBuffer::bind() const
 {
   impl->bind();
+}
+
+void IndexBuffer::resize(size_t new_count)
+{
+  impl->resize(new_count);
 }

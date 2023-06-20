@@ -71,12 +71,12 @@ void Mesh::update_geometry(const media::geometry::Mesh& src_mesh)
 
   if (src_mesh.vertices_count() > impl->vertex_buffer.vertices_count())
   {
-    impl->vertex_buffer = VertexBuffer(impl->context, src_mesh.vertices_count());
+    impl->vertex_buffer.resize(src_mesh.vertices_count());
   }
 
   if (src_mesh.indices_count() > impl->index_buffer.indices_count())
   {
-    impl->index_buffer = IndexBuffer(impl->context, src_mesh.indices_count());
+    impl->index_buffer.resize(src_mesh.indices_count());
   }
 
   impl->vertex_buffer.set_data(0, src_mesh.vertices_count(), src_mesh.vertices_data());

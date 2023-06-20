@@ -328,6 +328,9 @@ class VertexBuffer
     /// Load data
     void set_data(size_t offset, size_t count, const Vertex* vertices);
 
+    /// Resize
+    void resize(size_t vertices_count);
+
     /// Bind buffer
     void bind() const;
 
@@ -349,6 +352,9 @@ class IndexBuffer
 
     /// Load data
     void set_data(size_t offset, size_t count, const index_type* indices);
+
+    /// Resize
+    void resize(size_t vertices_count);
 
     /// Bind buffer
     void bind() const;
