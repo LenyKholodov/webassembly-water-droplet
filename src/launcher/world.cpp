@@ -16,11 +16,12 @@ using namespace engine;
 
 const char* LEAF_MESH = "media/meshes/leaf.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.1f;
-const float DROPLET_PARTICLE_MASS = 0.1f;
+const float DROPLET_PARTICLE_MASS = 0.01f;
 const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 10.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
+const math::vec3f LEAVES_SCALE(0.2f);
 const float GROUND_SIZE = 50.0f;
-const float GROUND_OFFSET = -70.f;
+const float GROUND_OFFSET = -7.f;
 const float LEAF_MASS = 1.0f;
 
 //todo: remove motion states from rigid bodies
@@ -180,10 +181,19 @@ struct World::Impl
       materials.insert(primitive.material.c_str(), render_material);
     }
 
+      //scale mesh
+
+    media::geometry::Vertex* vertex = leaf_model.mesh.vertices_data();
+
+    for (size_t i=0, count=leaf_model.mesh.vertices_count(); i<count; i++, vertex++)
+    {
+      vertex->position *= LEAVES_SCALE;
+    }
+
       //create leaves
 
      //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
-     add_stem(math::vec3f(-30.0f, 0.0f, 30.0f), to_quat(math::rotate(math::degree(65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+     add_stem(math::vec3f(-3.0f, 6.0f, 3.0f), to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
      //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
 
       //configure physics
@@ -201,7 +211,7 @@ struct World::Impl
 
     //for test only
 
-    generate_droplet();
+    generate_droplet(math::vec3f(0, 10.0f, 6));
   }
 
   void setup_ground()
@@ -377,14 +387,42 @@ struct World::Impl
     }
   }
 
-  void generate_droplet()
+  void generate_droplet(const math::vec3f& droplet_center)
   {
-    for (size_t i=0; i<DROPLET_GENERATION_PARTICLES_COUNT; i++)
+    static size_t PARALLELS_COUNT = 3, MERIDIANS_COUNT = 3, LAYERS_COUNT = 3;
+    static float DROPLET_RADIUS = LAYERS_COUNT * DROPLET_PARTICLE_RADIUS * 2.0f;
+
+    for (size_t i=0; i<LAYERS_COUNT; i++)
+    {
+      float radius = float(i+1) / LAYERS_COUNT * DROPLET_RADIUS;
+
+      for (size_t j=0; j<PARALLELS_COUNT; j++)
+      {
+        float rel_y = float(j+1) / PARALLELS_COUNT;
+
+        rel_y = 2.0f * (rel_y - 0.5f);
+
+        float y = rel_y * DROPLET_RADIUS;
+
+        for (size_t k=0; k<MERIDIANS_COUNT; k++)
+        {
+          static float PI2 = 3.1415926f * 2.0f;
+
+          float angle = float(k) / MERIDIANS_COUNT * PI2;
+
+          math::vec3f position(cos(angle) * radius, y, sin(angle) * radius);
+
+          generate_droplet_particle(position + droplet_center);
+        }
+      }
+    }
+
+    /*for (size_t i=0; i<DROPLET_GENERATION_PARTICLES_COUNT; i++)
     {
       math::vec3f offset(0, 10.0f + crand() * DROPLET_GENERATION_RADIUS, 0);
 
       generate_droplet_particle(offset);
-    }
+    }*/
   }
 
   void generate_droplet_particle(const math::vec3f& offset)
@@ -505,7 +543,7 @@ struct World::Impl
 
         static const float TIME_STEP = 0.01f;
         static const float DROPLET_RADIUS = 1.5f;
-        static const float DROPLET_FORCE = 0.04f;
+        static const float DROPLET_FORCE = 0.01f;
         static const float EPSILON = 0.001f;
 
         math::vec3f force = droplet->center - (position + velocity * TIME_STEP);
