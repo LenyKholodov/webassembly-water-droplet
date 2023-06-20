@@ -131,6 +131,15 @@ bool HullBuilder::build_hull(const char* material_name)
   impl->smoother->set_smooth_level(impl->smooth_level, impl->refine_level);
   impl->smoother->smooth(impl->input_hull_vertices, impl->input_hull_indices, impl->result_hull_vertices, impl->result_hull_indices);
 
+    //generate texcoord & colors
+
+  for (Vertex& vertex : impl->result_hull_vertices)
+  {
+    static const float PI = 3.1415926f;
+    vertex.tex_coord = math::vec2f(asin(vertex.normal.x)/PI + 0.5f, asin(vertex.normal.y)/PI + 0.5f);
+    vertex.color = math::vec4f(1.0f, 1.0f, 1.0f, 1.0f);
+  }
+
     //update mesh
 
   impl->mesh.vertices_resize(impl->result_hull_vertices.size());
