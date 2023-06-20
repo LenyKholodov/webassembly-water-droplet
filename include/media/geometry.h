@@ -117,6 +117,12 @@ class Mesh
     /// Clear all data
     void clear();
 
+    /// Update transaction ID
+    size_t update_transaction_id() const;
+
+    /// Increment update transaction ID
+    void touch();
+
     /// Store user data
     template <class T> T& set_user_data(const T& value);
 

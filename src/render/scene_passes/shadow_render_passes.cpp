@@ -127,12 +127,7 @@ class ShadowPass : IScenePass
     {
         //create mesh data
 
-      RenderableMesh* renderable_mesh = mesh.mesh().find_user_data<RenderableMesh>();
-
-      if (!renderable_mesh)
-      {
-        renderable_mesh = &mesh.mesh().set_user_data(RenderableMesh(mesh.mesh(), context));
-      }
+      RenderableMesh* renderable_mesh = RenderableMesh::get(mesh.mesh(), context);
 
         //add mesh to pass
 

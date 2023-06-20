@@ -28,10 +28,28 @@ typedef std::vector<engine::scene::Projectile::Pointer> ProjectileArray;
 struct RenderableMesh
 {
   low_level::Mesh mesh;
+  size_t vertices_count;
+  size_t indices_count;
 
   RenderableMesh(media::geometry::Mesh& mesh, ScenePassContext& context)
     : mesh(context.device().create_mesh(mesh, context.materials()))
+    , vertices_count(mesh.vertices_count())
+    , indices_count(mesh.indices_count())
   {
+  }
+
+  static RenderableMesh* get(media::geometry::Mesh& mesh, ScenePassContext& context)
+  {
+    RenderableMesh* renderable_mesh = mesh.find_user_data<RenderableMesh>();
+
+    if (!renderable_mesh)
+    {
+      renderable_mesh = &mesh.set_user_data(RenderableMesh(mesh, context));
+    }
+
+    renderable_mesh->mesh.update_geometry(mesh);
+
+    return renderable_mesh;
   }
 };
 

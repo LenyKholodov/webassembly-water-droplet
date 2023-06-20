@@ -73,7 +73,7 @@ int main(void)
     math::vec3f camera_move_direction(0.f);
 
     Application app;
-    Window window("Render test", 640, 480);
+    Window window("Render test", 1280, 720);
 
     window.set_keyboard_handler([&](Key key, bool pressed) {
       math::vec3f direction_change;

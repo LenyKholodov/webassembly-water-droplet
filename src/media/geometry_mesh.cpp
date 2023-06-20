@@ -19,6 +19,9 @@ struct Mesh::Impl
   UninitializedStorage<index_type> indices_data;
   PrimitiveArray primitives;
   UserDataMap user_data_map;
+  size_t update_transaction_id;
+
+  Impl() : update_transaction_id() {}
 
   uint32_t add_primitive(const char* material, PrimitiveType type, uint32_t first, uint32_t count, uint32_t base_vertex)
   {
@@ -346,4 +349,14 @@ Mesh::UserDataPtr Mesh::find_user_data_core(const std::type_info& type) const
     return nullptr;
 
   return it->second;
+}
+
+size_t Mesh::update_transaction_id() const
+{
+  return impl->update_transaction_id;
+}
+
+void Mesh::touch()
+{
+  impl->update_transaction_id++;
 }

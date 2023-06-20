@@ -312,6 +312,8 @@ class FrameBuffer
     std::shared_ptr<Impl> impl;
 };
 
+//TODO: VB & IB usage for dynamic meshes
+
 /// Vertex buffer
 /// (simplification: no streams and layouts)
 class VertexBuffer
@@ -469,6 +471,9 @@ class Mesh
 
     /// Get primitive
     const Primitive& primitive(size_t index) const;
+
+    /// Update geometry
+    void update_geometry(const media::geometry::Mesh& mesh);
 
   private:
     struct Impl;

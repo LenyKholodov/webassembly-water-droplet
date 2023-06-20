@@ -7,6 +7,8 @@
 #include "btBulletDynamicsCommon.h"
 #include "BulletCollision/Gimpact/btGImpactShape.h"
 
+#include "hull.h"
+
 using namespace engine::common;
 using namespace engine::render::scene;
 using namespace engine::render::low_level;
@@ -15,7 +17,7 @@ using namespace engine::scene;
 using namespace engine;
 
 const char* LEAF_MESH = "media/meshes/leaf.obj";
-const float DROPLET_PARTICLE_RADIUS = 0.1f;
+const float DROPLET_PARTICLE_RADIUS = 0.05f;
 const float DROPLET_PARTICLE_MASS = 0.01f;
 const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 10.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
@@ -23,6 +25,8 @@ const math::vec3f LEAVES_SCALE(0.2f);
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
 const float LEAF_MASS = 1.0f;
+const size_t MIN_DROPLET_PARTICLES_COUNT = 3;
+const char* DROPLET_HULL_MATERIAL = "mtl1";
 
 //todo: remove motion states from rigid bodies
 
@@ -85,6 +89,8 @@ struct Droplet
   math::vec3f center;
   std::vector<math::vec3f> points;
   std::vector<std::shared_ptr<PhysBodySync>> bodies;
+  HullBuilder hull_builder;
+  scene::Mesh::Pointer hull_mesh;
 };
 
 void find_nearest_point(
@@ -416,13 +422,6 @@ struct World::Impl
         }
       }
     }
-
-    /*for (size_t i=0; i<DROPLET_GENERATION_PARTICLES_COUNT; i++)
-    {
-      math::vec3f offset(0, 10.0f + crand() * DROPLET_GENERATION_RADIUS, 0);
-
-      generate_droplet_particle(offset);
-    }*/
   }
 
   void generate_droplet_particle(const math::vec3f& offset)
@@ -430,7 +429,7 @@ struct World::Impl
     scene::Mesh::Pointer mesh = scene::Mesh::create();
 
     mesh->set_mesh(droplet_debug_particle_mesh);
-    mesh->bind_to_parent(*scene_root);
+    //mesh->bind_to_parent(*scene_root);
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, dynamics_world));
 
@@ -470,11 +469,12 @@ struct World::Impl
       body->applyTorque(torque);
     }
 
-      //update droplets
+      //clasterize droplet particles to droplets
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
       droplet->points.clear();
+      droplet->hull_builder.reset();
     }
 
     for (std::shared_ptr<PhysBodySync>& particle : droplet_particles)
@@ -506,11 +506,18 @@ struct World::Impl
         droplet->points.push_back(position);
         droplet->bodies.push_back(particle);
 
+        droplet->hull_mesh = scene::Mesh::create();
+
+        droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
+        droplet->hull_mesh->bind_to_parent(*scene_root);
+
         droplets.push_back(droplet);
       }
     }
 
-    engine_log_debug("Droplets count: %d", droplets.size());
+    //configure droplets
+
+    //engine_log_debug("Droplets count: %d", droplets.size());
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
@@ -523,15 +530,30 @@ struct World::Impl
       }
       
       for (const math::vec3f& point : droplet->points)
+      {
         center += point;
+
+        droplet->hull_builder.add_point(point);
+      }
       
       droplet->center = center / droplet->points.size();
 
-      engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
+      //engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
     }
 
-    droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->points.empty(); }),
+    //remove empty droplets
+
+    droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->points.size() < MIN_DROPLET_PARTICLES_COUNT; }),
       droplets.end());
+
+    //build droplet hulls
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL);
+    }
+
+    //apply forces to droplets
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
