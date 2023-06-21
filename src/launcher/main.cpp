@@ -279,6 +279,7 @@ int main(void)
     SceneViewport scene_viewport = scene_renderer.create_window_viewport();
 
     scene_viewport.set_view_node(camera);
+    scene_viewport.set_clear_color(math::vec4f(0.0f, 0.0f, 0.0f, 1.0f));
 
       //main loop
 

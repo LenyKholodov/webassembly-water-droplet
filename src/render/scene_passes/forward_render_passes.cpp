@@ -58,7 +58,8 @@ struct ForwardLightingPass : IScenePass
 
         //configure framebuffer
 
-      forward_lighting_pass.set_frame_buffer(context.default_frame_buffer());        
+      forward_lighting_pass.set_frame_buffer(context.default_frame_buffer());
+      forward_lighting_pass.set_clear_color(context.clear_color());
 
         //clean pass
 

@@ -202,6 +202,7 @@ struct DeferredLightingPass : IScenePass
         //configure framebuffer
 
       deferred_lighting_pass.set_frame_buffer(context.default_frame_buffer());
+      deferred_lighting_pass.set_clear_color(context.clear_color());
 
         //traverse scene
 

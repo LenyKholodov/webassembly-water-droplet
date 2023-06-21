@@ -127,6 +127,7 @@ struct Pass::Impl
     , program(program)
     , frame_buffer(frame_buffer)
     , clear_flags(Clear_All)
+    , clear_color(0.0f, 0.0f, 0.0f, 1.0f)
     , depth_stencil_state(false, false, CompareMode_AlwaysPass)
     , blend_state(false, BlendArgument_One, BlendArgument_Zero)
   {

@@ -5,6 +5,9 @@ using namespace engine::render::low_level;
 using namespace engine::scene;
 using namespace engine::common;
 
+static constexpr float ENV_MAP_Z_NEAR = 0.1f;
+static constexpr float ENV_MAP_Z_FAR = 1000.0f;
+
 namespace engine {
 namespace render {
 namespace scene {
@@ -64,15 +67,65 @@ class MirrorsPrerenderPass : IScenePass
      
         //initiate sub-renderings for all cubemap faces
 
+      struct RenderDesc
+      {
+        math::vec4f color;
+        math::vec3f dir;
+        math::vec3f up;
+        bool        right_hand;
+      };
+
+      static constexpr size_t CUBEMAP_FACES_COUNT = 6;
+
+      static RenderDesc envmap_descs[CUBEMAP_FACES_COUNT] = {
+        {math::vec4f(1, 1, 0, 0), math::vec3f(1, 0, 0),  math::vec3f(0, -1, 0), false},
+        {math::vec4f(1, 1, 1, 0), math::vec3f(-1, 0, 0), math::vec3f(0, -1, 0), true},
+
+        {math::vec4f(1, 0, 1, 0), math::vec3f(0, 1, 0),  math::vec3f(0, 0, 1), false},
+        {math::vec4f(1, 0, 1, 1), math::vec3f(0, -1, 0), math::vec3f(0, 0, -1), false},
+
+        {math::vec4f(1, 0, 0, 1), math::vec3f(0, 0, 1),  math::vec3f(0, -1, 0), false},
+        {math::vec4f(1, 0, 0, 0), math::vec3f(0, 0, -1), math::vec3f(0, -1, 0), false},
+      };
+
+      size_t map_index = 0;
+
       for (std::shared_ptr<Portal>& portal : envmap->portals)
       {
+        engine_check(map_index < CUBEMAP_FACES_COUNT && "Invalid cubemap face index");
+
+        const RenderDesc& desc = envmap_descs[map_index];
+
             //configure viewport
 
-        SceneViewport scene_viewport(portal->frame_buffer);        
+        math::anglef fov = math::degree(90.0f);
+        math::mat4f proj_tm = compute_perspective_proj_tm(fov, fov, ENV_MAP_Z_NEAR, ENV_MAP_Z_FAR);
+        math::mat4f subview_tm;
 
-        //scene_viewport.set_view_node(entity, );
-        //todo: setup framebuffer
+        math::vec3f z = normalize(-desc.dir), 
+                    y = desc.up, 
+                    x = normalize(cross(y, z));
 
+        y = normalize(cross(z, x));
+        
+        subview_tm[0] = desc.right_hand ? math::vec4f(x, 0.0f) : math::vec4f(-x, 0.0f);
+        subview_tm[1] = math::vec4f(y, 0.0f);
+        subview_tm[2] = math::vec4f(z, 0.0f);
+        subview_tm[3] = math::vec4f(0.0f, 0.0f, 0.0f, 1.0f);
+        subview_tm    = inverse(subview_tm);
+
+        SceneViewport scene_viewport(portal->frame_buffer);
+
+        scene_viewport.set_clear_color(desc.color);
+        scene_viewport.set_view_node(entity, proj_tm, subview_tm);
+
+          //nested render
+
+        context.renderer().render(scene_viewport);
+
+          //iteration
+
+        map_index++;
       }
     }
 

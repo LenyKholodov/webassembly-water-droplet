@@ -18,6 +18,7 @@ struct ScenePassContext::Impl
   math::mat4f view_projection_tm; //projection * view matrix
   FrameNode root_frame_node; //root frame node
   FrameBuffer default_frame_buffer; //default frame buffer
+  math::vec4f clear_color; //clear color
 
   Impl(ISceneRenderer& renderer)
     : renderer(renderer)
@@ -26,6 +27,7 @@ struct ScenePassContext::Impl
     , projection_tm(1.0f)
     , view_projection_tm(1.0f)
     , default_frame_buffer(renderer.default_frame_buffer())
+    , clear_color(0.0f, 0.0f, 0.0f, 1.0f)
   {
   }
 };
@@ -160,7 +162,22 @@ const engine::render::low_level::FrameBuffer& ScenePassContext::default_frame_bu
   return impl->default_frame_buffer;
 }
 
-void ScenePassContext::set_default_frame_buffer(const low_level::FrameBuffer& frame_buffer)
+void ScenePassContext::set_default_frame_buffer(const engine::render::low_level::FrameBuffer& frame_buffer)
 {
   impl->default_frame_buffer = frame_buffer;
+}
+
+const math::vec4f& ScenePassContext::clear_color() const
+{
+  return impl->clear_color;
+}
+
+void ScenePassContext::set_clear_color(const math::vec4f& color)
+{
+  impl->clear_color = color;
+}
+
+SceneRenderer ScenePassContext::renderer() const
+{
+  return impl->renderer.scene_renderer();
 }

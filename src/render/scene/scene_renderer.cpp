@@ -23,6 +23,7 @@ struct SceneViewport::Impl
   math::mat4f projection_tm; //projection matrix of the scene viewport
   math::mat4f subview_tm; //subview matrix of the scene viewport
   FrameBuffer frame_buffer; //framebuffer of the scene viewport
+  math::vec4f clear_color; //clear color of the scene viewport
   PropertyMap properties; //viewport properties;
   TextureList textures; //viewport textures;
 
@@ -30,6 +31,7 @@ struct SceneViewport::Impl
     : projection_tm(1.0f)
     , subview_tm(1.0f)
     , frame_buffer(frame_buffer)
+    , clear_color(0.0f, 0.0f, 0.0f, 1.0f)
   {
   }
 };
@@ -52,6 +54,16 @@ const engine::render::low_level::FrameBuffer& SceneViewport::frame_buffer() cons
 void SceneViewport::set_frame_buffer(const low_level::FrameBuffer& frame_buffer)
 {
   impl->frame_buffer = frame_buffer;
+}
+
+void SceneViewport::set_clear_color(const math::vec4f& color)
+{
+  impl->clear_color = color;
+}
+
+const math::vec4f& SceneViewport::clear_color() const
+{
+  return impl->clear_color;
 }
 
 Node::Pointer& SceneViewport::view_node() const
@@ -159,7 +171,6 @@ struct SceneRenderQueueEntry
     , nested_depth(nested_depth)
     , passes_context(renderer)
   {
-    passes_context.set_default_frame_buffer(viewport.frame_buffer());
   }
 
   bool has_children() const { return first_child != nullptr; }
@@ -264,6 +275,11 @@ struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this
     viewport_bindings.bindings.bind(scene_viewport.properties());
     viewport_bindings.bindings.bind(scene_viewport.textures());
 
+      //sync frame info
+
+    context.set_default_frame_buffer(scene_viewport.frame_buffer());
+    context.set_clear_color(scene_viewport.clear_color());
+
       //set camera
 
     context.set_view_node(scene_viewport.view_node(), scene_viewport.projection_tm(), scene_viewport.subview_tm());
@@ -304,6 +320,9 @@ struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this
       //sync frame info
 
     context.set_current_frame_id(render_queue_root.passes_context.current_frame_id());
+
+    context.set_default_frame_buffer(scene_viewport.frame_buffer());
+    context.set_clear_color(scene_viewport.clear_color());
 
       //setup viewport context
 

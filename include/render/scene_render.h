@@ -74,11 +74,17 @@ class ScenePassContext
     /// View & projection TM
     const math::mat4f& view_projection_tm() const;
 
+    /// Set clear color
+    void set_clear_color(const math::vec4f& color);
+
+    /// Get clear color
+    const math::vec4f& clear_color() const;
+
     /// Default framebuffer
     const low_level::FrameBuffer& default_frame_buffer() const;
 
     /// Set default framebuffer
-    void set_default_frame_buffer(const low_level::FrameBuffer& frame_buffer);
+    void set_default_frame_buffer(const low_level::FrameBuffer& fb);
 
     /// Renderer
     SceneRenderer renderer() const;
@@ -208,6 +214,12 @@ class SceneViewport
 
     /// Set framebuffer
     void set_frame_buffer(const low_level::FrameBuffer& frame_buffer);
+
+    /// Set clear color
+    void set_clear_color(const math::vec4f& color);
+
+    /// Get clear color
+    const math::vec4f& clear_color() const;
 
     /// View node
     scene::Node::Pointer& view_node() const;

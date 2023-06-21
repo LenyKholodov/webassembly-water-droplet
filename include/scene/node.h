@@ -6,6 +6,7 @@
 
 #include <math/matrix.h>
 #include <math/quat.h>
+#include <math/angle.h>
 
 #include <memory>
 #include <typeinfo>
@@ -120,6 +121,9 @@ class Node : public std::enable_shared_from_this<Node>
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
+
+/// Compute perspective projection matrix
+math::mat4f compute_perspective_proj_tm(const math::anglef& fov_x, const math::anglef& fov_y, float z_near, float z_far);
 
 #include <scene/detail/node.inl>
 
