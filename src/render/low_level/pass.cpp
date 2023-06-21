@@ -144,6 +144,11 @@ struct Pass::Impl
 
     frame_buffer.bind();
 
+//    engine_log_debug("render %u primitives with clear color (%f, %f, %f, %f) to fb %u viewport (%d, %d, %d, %d)", primitives.size(), clear_color.x, clear_color.y, clear_color.z, clear_color.w, frame_buffer.id(),
+//      frame_buffer.viewport().x, frame_buffer.viewport().y, frame_buffer.viewport().width, frame_buffer.viewport().height);
+
+      //clear frame buffer
+
     clear();
 
       //bind states

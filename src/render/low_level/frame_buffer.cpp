@@ -168,6 +168,8 @@ struct FrameBuffer::Impl
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &frame_buffer_id);
 
+    engine_log_debug("FBO destroyed: %d", frame_buffer_id);
+
     frame_buffer_id = 0;
   }
 
@@ -186,7 +188,9 @@ struct FrameBuffer::Impl
     if (!frame_buffer_id)
       throw Exception::format("FBO creation failed");
 
-    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer_id);  
+    glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer_id);
+
+    engine_log_debug("FBO created: %d", frame_buffer_id);
 
     try
     {
@@ -292,6 +296,11 @@ FrameBuffer::FrameBuffer(const DeviceContextPtr& context, const Window& window)
   engine_check(context->handle() == window.handle());
 
   impl.reset(new Impl(context, true));
+}
+
+size_t FrameBuffer::id() const
+{
+  return impl->frame_buffer_id;
 }
 
 void FrameBuffer::set_viewport(const Viewport& viewport)

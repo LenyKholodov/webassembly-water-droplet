@@ -32,6 +32,18 @@ class ScenePassContext
     /// Set frame ID
     void set_current_frame_id(FrameId id);
 
+    /// Index of the current subframe (continuous numbering, not within a frame)
+    FrameId current_subframe_id() const;
+
+    /// Set subframe ID
+    void set_current_subframe_id(FrameId id);
+
+    /// Index of the current enumeration (for caching and recursions avoiding)
+    FrameId current_enumeration_id() const;
+
+    /// Set enumeration ID
+    void set_current_enumeration_id(FrameId id);
+
     /// Frame node
     FrameNode& root_frame_node() const;
 
@@ -129,6 +141,12 @@ class FrameNode
     /// ID of frame when this node has been rendered
     FrameId rendered_frame_id() const;
 
+    /// ID of subframe when this node has been rendered
+    FrameId rendered_subframe_id() const;
+
+    /// Enumeration id
+    size_t rendered_enumeration_id() const;
+
     /// Render frame
     void render(ScenePassContext& context);
 
@@ -208,6 +226,9 @@ class SceneViewport
 
     /// Viewport
     const low_level::Viewport& viewport() const;
+
+    /// Set viewport
+    void set_viewport(const low_level::Viewport& viewport);
 
     /// Framebuffer
     const low_level::FrameBuffer& frame_buffer() const;

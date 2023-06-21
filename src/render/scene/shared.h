@@ -33,9 +33,7 @@ class ISceneRenderer
     virtual low_level::Device& device() = 0;
 
     /// Default frame buffer
-    virtual low_level::FrameBuffer& default_frame_buffer() = 0;
-
-    
+    virtual low_level::FrameBuffer& default_frame_buffer() = 0;   
 
     /// Scene renderer (back reference)
     virtual SceneRenderer scene_renderer() = 0;

@@ -14,7 +14,6 @@ struct RenderBuffer::Impl
     : context(context)
     , format(format)
   {
-    engine_log_debug("%s(%u)", __FILE__, __LINE__);
     engine_check(context);
 
     glGenRenderbuffers(1, &render_buffer_id);

@@ -508,6 +508,8 @@ struct World::Impl
 
         droplet->hull_mesh = scene::Mesh::create();
 
+        droplet->hull_mesh->set_environment_map_required(true); //require envmap prerendering
+
         droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
         droplet->hull_mesh->bind_to_parent(*scene_root);
 

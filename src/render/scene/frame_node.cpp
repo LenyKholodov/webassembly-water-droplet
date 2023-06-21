@@ -41,6 +41,8 @@ typedef std::vector<FrameNode> FrameArray;
 struct FrameNode::Impl
 {
   FrameId rendered_frame_id; //frame ID when this frame was rendered
+  FrameId rendered_subframe_id; //subframe ID when this frame was rendered
+  size_t rendered_enumeration_id; //enumeration ID when this frame was rendered
   PassArray passes; //list of frame passes
   bool need_sort_passes; //passes should be sorted
   PropertyMap properties; //frame properties
@@ -49,6 +51,8 @@ struct FrameNode::Impl
 
   Impl()
     : rendered_frame_id()
+    , rendered_subframe_id()
+    , rendered_enumeration_id()
     , need_sort_passes()
   {
     passes.reserve(RESERVED_PASSES_COUNT);
@@ -93,16 +97,30 @@ FrameId FrameNode::rendered_frame_id() const
   return impl->rendered_frame_id;
 }
 
+FrameId FrameNode::rendered_subframe_id() const
+{
+  return impl->rendered_subframe_id;
+}
+
+size_t FrameNode::rendered_enumeration_id() const
+{
+  return impl->rendered_enumeration_id;
+}
+
 void FrameNode::render(ScenePassContext& context)
 {
     //render dependencies
 
   FrameId current_frame_id = context.current_frame_id();
+  FrameId current_subframe_id = context.current_subframe_id();
+  size_t current_enumeration_id = context.current_enumeration_id();
 
   for (auto& frame : impl->deps)
   {
-    if (frame.rendered_frame_id() >= current_frame_id)
+    if (frame.rendered_enumeration_id() >= current_enumeration_id)
+    {
       continue;
+    }
 
     frame.render(context);
   }
@@ -128,6 +146,8 @@ void FrameNode::render(ScenePassContext& context)
     //update frame info
 
   impl->rendered_frame_id = current_frame_id;
+  impl->rendered_subframe_id = current_subframe_id;
+  impl->rendered_enumeration_id = current_enumeration_id;
 
     //clear frame data
 

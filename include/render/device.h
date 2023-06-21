@@ -307,6 +307,9 @@ class FrameBuffer
     /// Bind framebuffer for rendering to a context
     void bind() const;
 
+    /// Framebuffer id
+    size_t id() const;
+
   private:
     struct Impl;
     std::shared_ptr<Impl> impl;

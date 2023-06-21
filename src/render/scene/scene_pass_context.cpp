@@ -9,6 +9,8 @@ struct ScenePassContext::Impl
 {
   ISceneRenderer& renderer; //back reference to the owner
   FrameId current_frame_id; //current frame ID
+  FrameId current_subframe_id; //current frame ID
+  size_t current_enumeration_id; //current enumeration ID
   BindingContext bindings; //context bindings
   Node::Pointer view_node; //view node
   Node::Pointer root_node; //scene root node
@@ -23,6 +25,8 @@ struct ScenePassContext::Impl
   Impl(ISceneRenderer& renderer)
     : renderer(renderer)
     , current_frame_id()
+    , current_subframe_id()
+    , current_enumeration_id()
     , view_tm(1.0f)
     , projection_tm(1.0f)
     , view_projection_tm(1.0f)
@@ -38,11 +42,6 @@ ScenePassContext::ScenePassContext(ISceneRenderer& renderer)
   impl->bindings.bind(impl->properties);
 }
 
-FrameId ScenePassContext::current_frame_id() const
-{
-  return impl->current_frame_id;
-}
-
 Device& ScenePassContext::device() const
 {
   return impl->renderer.device();
@@ -53,9 +52,34 @@ FrameNode& ScenePassContext::root_frame_node() const
   return impl->root_frame_node;
 }
 
+FrameId ScenePassContext::current_frame_id() const
+{
+  return impl->current_frame_id;
+}
+
 void ScenePassContext::set_current_frame_id(FrameId id)
 {
   impl->current_frame_id = id;
+}
+
+FrameId ScenePassContext::current_subframe_id() const
+{
+  return impl->current_subframe_id;
+}
+
+void ScenePassContext::set_current_subframe_id(FrameId id)
+{
+  impl->current_subframe_id = id;
+}
+
+size_t ScenePassContext::current_enumeration_id() const
+{
+  return impl->current_enumeration_id;
+}
+
+void ScenePassContext::set_current_enumeration_id(size_t id)
+{
+  impl->current_enumeration_id = id;
 }
 
 void ScenePassContext::bind(const low_level::BindingContext* parent)

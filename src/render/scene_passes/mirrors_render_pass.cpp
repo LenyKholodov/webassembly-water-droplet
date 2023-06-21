@@ -55,6 +55,10 @@ class MirrorsPrerenderPass : IScenePass
         if (entity->is_environment_map_required())
           prerender_environment_map(entity, context);
       }
+
+        //clear data
+
+      visitor.reset();      
     }
 
     void prerender_environment_map(const Entity::Pointer& entity, ScenePassContext& context)
@@ -78,14 +82,14 @@ class MirrorsPrerenderPass : IScenePass
       static constexpr size_t CUBEMAP_FACES_COUNT = 6;
 
       static RenderDesc envmap_descs[CUBEMAP_FACES_COUNT] = {
-        {math::vec4f(1, 1, 0, 0), math::vec3f(1, 0, 0),  math::vec3f(0, -1, 0), false},
-        {math::vec4f(1, 1, 1, 0), math::vec3f(-1, 0, 0), math::vec3f(0, -1, 0), true},
+        {math::vec4f(1, 0, 0, 1), math::vec3f(1, 0, 0),  math::vec3f(0, -1, 0), false},
+        {math::vec4f(1, 1, 0, 1), math::vec3f(-1, 0, 0), math::vec3f(0, -1, 0), true},
 
-        {math::vec4f(1, 0, 1, 0), math::vec3f(0, 1, 0),  math::vec3f(0, 0, 1), false},
-        {math::vec4f(1, 0, 1, 1), math::vec3f(0, -1, 0), math::vec3f(0, 0, -1), false},
+        {math::vec4f(0, 1, 0, 1), math::vec3f(0, 1, 0),  math::vec3f(0, 0, 1), false},
+        {math::vec4f(0, 1, 1, 1), math::vec3f(0, -1, 0), math::vec3f(0, 0, -1), false},
 
-        {math::vec4f(1, 0, 0, 1), math::vec3f(0, 0, 1),  math::vec3f(0, -1, 0), false},
-        {math::vec4f(1, 0, 0, 0), math::vec3f(0, 0, -1), math::vec3f(0, -1, 0), false},
+        {math::vec4f(0, 0, 1, 1), math::vec3f(0, 0, 1),  math::vec3f(0, -1, 0), false},
+        {math::vec4f(0, 0, 0, 1), math::vec3f(0, 0, -1), math::vec3f(0, -1, 0), false},
       };
 
       size_t map_index = 0;
@@ -93,6 +97,8 @@ class MirrorsPrerenderPass : IScenePass
       for (std::shared_ptr<Portal>& portal : envmap->portals)
       {
         engine_check(map_index < CUBEMAP_FACES_COUNT && "Invalid cubemap face index");
+
+            //get render desc
 
         const RenderDesc& desc = envmap_descs[map_index];
 
@@ -115,12 +121,14 @@ class MirrorsPrerenderPass : IScenePass
         subview_tm    = inverse(subview_tm);
 
         SceneViewport scene_viewport(portal->frame_buffer);
+        //SceneViewport scene_viewport = context.renderer().create_window_viewport();;
 
         scene_viewport.set_clear_color(desc.color);
         scene_viewport.set_view_node(entity, proj_tm, subview_tm);
 
           //nested render
 
+//TODO: self exclude from rendering
         context.renderer().render(scene_viewport);
 
           //iteration

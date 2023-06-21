@@ -25,6 +25,7 @@ class ShadowPass : IScenePass
   public:
     ShadowPass(SceneRenderer& renderer)
       : shadow_program(renderer.device().create_program_from_file(SHADOW_PROGRAM_FILE))
+      , rendered_frame_id()
     {
     }
 
@@ -36,13 +37,14 @@ class ShadowPass : IScenePass
     void get_dependencies(std::vector<std::string>&)
     {
     }
-
+  
     void prerender(ScenePassContext& context)
     {
-    }
+        //skip duplicate prerenderings within the same frame
 
-    void render(ScenePassContext& context)
-    {
+      if (rendered_frame_id >= context.current_frame_id())
+        return;
+
         //traverse scene
 
       Node::Pointer root_node = context.root_node();
@@ -71,6 +73,14 @@ class ShadowPass : IScenePass
         //clear data
 
       visitor.reset();
+
+        //update frame info
+
+      rendered_frame_id = context.current_frame_id();
+    }
+
+    void render(ScenePassContext& context)
+    {
     }
 
   private:
@@ -140,6 +150,7 @@ class ShadowPass : IScenePass
 
   private:
     low_level::Program shadow_program;
+    FrameId rendered_frame_id;
     SceneVisitor visitor;
 };
 

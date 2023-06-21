@@ -97,7 +97,6 @@ struct Portal
   {
     frame_buffer.attach_color_target(texture, layer, 0);
     frame_buffer.attach_depth_buffer(depth_render_buffer);
-    frame_buffer.set_viewport(low_level::Viewport(0, 0, (int)texture.width(), (int)texture.height()));
   }
 };
 
