@@ -82,22 +82,22 @@ struct Shadow
 /// Portal
 struct Portal
 {
-  low_level::Texture portal_texture;
+  low_level::Texture texture;
   low_level::RenderBuffer depth_render_buffer;
-  low_level::FrameBuffer portal_frame_buffer;
+  low_level::FrameBuffer frame_buffer;
 
   Portal(
     engine::render::low_level::Device& device,
-    const low_level::Texture& portal_texture,
+    const low_level::Texture& texture,
     size_t layer,
     const low_level::RenderBuffer& depth_render_buffer)
-    : portal_texture(portal_texture)
+    : texture(texture)
     , depth_render_buffer(depth_render_buffer)
-    , portal_frame_buffer(device.create_frame_buffer())
+    , frame_buffer(device.create_frame_buffer())
   {
-    portal_frame_buffer.attach_color_target(portal_texture, layer, 0);
-    portal_frame_buffer.attach_depth_buffer(depth_render_buffer);
-    portal_frame_buffer.set_viewport(low_level::Viewport(0, 0, (int)portal_texture.width(), (int)portal_texture.height()));
+    frame_buffer.attach_color_target(texture, layer, 0);
+    frame_buffer.attach_depth_buffer(depth_render_buffer);
+    frame_buffer.set_viewport(low_level::Viewport(0, 0, (int)texture.width(), (int)texture.height()));
   }
 };
 
