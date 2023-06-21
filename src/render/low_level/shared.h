@@ -30,6 +30,8 @@ extern "C"
 #include <GLFW/glfw3.h>
 #endif
 
+//#define CHECK_GL_ERRORS
+
 namespace engine {
 namespace render {
 namespace low_level {
@@ -121,6 +123,7 @@ class DeviceContextImpl: BaseObject
 
     static void check_errors_impl()
     {
+#ifdef CHECK_GL_ERRORS
       using common::Exception;
 
       GLenum error = glGetError ();
@@ -148,6 +151,7 @@ class DeviceContextImpl: BaseObject
         default:
           throw Exception::format("OpenGL error: code=0x%04x", error);
       }
+#endif
     }
 
   private:

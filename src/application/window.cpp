@@ -3,6 +3,10 @@
 #include <common/log.h>
 #include <string>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#endif
+
 extern "C"
 {
 #define GLFW_INCLUDE_NONE
@@ -133,10 +137,12 @@ struct Window::Impl
   KeyHandler key_handler; //keyboard handler
   MouseButtonHandler mouse_button_handler; //mouse button handler
   MouseMoveHandler mouse_move_handler; //mouse move handler
+  bool touch_active; //is touch active
 
   Impl(const char* in_title, unsigned int width, unsigned int height)
     : title(in_title)
     , window()
+    , touch_active(false)
   {
     engine_log_info("Creating window '%s' %ux%u...", title.c_str(), width, height);
 
@@ -181,6 +187,28 @@ struct Window::Impl
     glfwSetKeyCallback(window, key_callback_static);
     glfwSetMouseButtonCallback(window, mouse_button_callback_static);
     glfwSetCursorPosCallback(window, mouse_move_callback_static);
+
+#ifdef __EMSCRIPTEN__
+    EMSCRIPTEN_RESULT res = emscripten_set_touchstart_callback("canvas", this, false, touch_start_callback_static);
+
+    if (res != EMSCRIPTEN_RESULT_SUCCESS)
+      engine_log_error("Can't set emscripten touchstart callback, result %d", res);
+
+    res = emscripten_set_touchend_callback("canvas", this, false, touch_end_callback_static);
+
+    if (res != EMSCRIPTEN_RESULT_SUCCESS)
+      engine_log_error("Can't set emscripten touchend callback, result %d", res);
+
+    res = emscripten_set_touchmove_callback("canvas", this, false, touch_move_callback_static);
+
+    if (res != EMSCRIPTEN_RESULT_SUCCESS)
+      engine_log_error("Can't set emscripten touchmove callback, result %d", res);
+
+    res = emscripten_set_touchcancel_callback("canvas", this, false, touch_end_callback_static);
+
+    if (res != EMSCRIPTEN_RESULT_SUCCESS)
+      engine_log_error("Can't set emscripten touchcancel callback, result %d", res);
+#endif
   }
 
   ~Impl()
@@ -190,6 +218,65 @@ struct Window::Impl
     glfwSetWindowUserPointer(window, nullptr);
     glfwDestroyWindow(window);
   }
+
+#ifdef __EMSCRIPTEN__
+  static int touch_start_callback_static(int event_type, const EmscriptenTouchEvent *touch_event, void *user_data)
+  {
+    if (!touch_event->numTouches)
+      return 0;
+
+    Impl* impl = reinterpret_cast<Impl*>(user_data);
+
+    if (!impl)
+      return 0;
+
+    impl->touch_active = true;
+
+    //hack to clear pressed button state sent by glfw (glfw sends mouse button press and mouse button release events for touch screens, but cursor coordinates are always 0, so use touch callbacks instead)
+    impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
+
+    //call touch move callback first to update touch positions
+    touch_move_callback_static(event_type, touch_event, user_data);
+
+    //TODO multitouch handling
+    impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_PRESS);
+
+    return 1;
+  }
+
+  static int touch_move_callback_static(int event_type, const EmscriptenTouchEvent *touch_event, void *user_data)
+  {
+    if (!touch_event->numTouches)
+      return 0;
+
+    Impl* impl = reinterpret_cast<Impl*>(user_data);
+
+    if (!impl)
+      return 0;
+
+    //TODO multitouch handling
+    const EmscriptenTouchPoint& touch = touch_event->touches[0];
+
+    impl->mouse_move_callback(touch.targetX, touch.targetY, true);
+
+    return 1;
+  }
+
+  static int touch_end_callback_static(int event_type, const EmscriptenTouchEvent *touch_event, void *user_data)
+  {
+    Impl* impl = reinterpret_cast<Impl*>(user_data);
+
+    if (!impl)
+      return 0;
+
+    impl->touch_active = false;
+
+    //TODO multitouch handling
+    impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
+
+    return 1;
+  }
+#endif
 
   static void key_callback_static(GLFWwindow* window, int key, int scancode, int action, int mods)
   {
@@ -260,14 +347,17 @@ struct Window::Impl
     if (!impl)
       return;
 
-    impl->mouse_move_callback(x, y);
+    impl->mouse_move_callback(x, y, false);
   }
 
-  void mouse_move_callback(double x, double y)
+  void mouse_move_callback(double x, double y, bool isTouch)
   {
     try
     {
       if (!mouse_move_handler)
+        return;
+
+      if (touch_active && !isTouch)
         return;
 
       mouse_move_handler(x, y);
