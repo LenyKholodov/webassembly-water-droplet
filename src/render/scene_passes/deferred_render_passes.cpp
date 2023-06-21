@@ -86,6 +86,10 @@ struct GBufferPass : IScenePass
     {
     }
 
+    void prerender(ScenePassContext& context)
+    {
+    }    
+
     void render(ScenePassContext& context)
     {
       Node::Pointer root_node = context.root_node();
@@ -171,6 +175,10 @@ struct DeferredLightingPass : IScenePass
       deps.push_back("G-Buffer");
       deps.push_back("Projectile Maps Rendering");
     }
+
+    void prerender(ScenePassContext& context)
+    {
+    }    
 
     void render(ScenePassContext& context)
     {

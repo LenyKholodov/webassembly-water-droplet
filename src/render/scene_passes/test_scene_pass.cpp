@@ -27,6 +27,11 @@ struct TestPass : IScenePass
     engine_log_debug(__FUNCTION__);
   }
 
+  void prerender(ScenePassContext& context)
+  {
+    engine_log_debug(__FUNCTION__);
+  }
+
   void render(ScenePassContext& context)
   {
     engine_log_debug(__FUNCTION__);

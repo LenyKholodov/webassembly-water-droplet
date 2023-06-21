@@ -32,6 +32,9 @@ class ISceneRenderer
     /// Rendering device
     virtual low_level::Device& device() = 0;
 
+    /// Scene renderer (back reference)
+    virtual SceneRenderer scene_renderer() = 0;
+
   protected:
     virtual ~ISceneRenderer() = default;
 };

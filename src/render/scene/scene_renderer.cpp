@@ -10,6 +10,7 @@ using namespace engine::common;
 ///
 
 const size_t RESERVED_PASSES_COUNT = 16; //number of reserved passes per scene renderer
+const size_t MAX_NESTED_RENDER_DEPTH = 2; //maximum number of nested renderings
 
 ///
 /// SceneViewport
@@ -18,10 +19,18 @@ const size_t RESERVED_PASSES_COUNT = 16; //number of reserved passes per scene r
 /// Implementation details of scene viewport
 struct SceneViewport::Impl
 {
-  Camera::Pointer camera; //camera of the scene viewport
+  Node::Pointer view_node; //camera of the scene viewport
+  math::mat4f projection_tm; //projection matrix of the scene viewport
+  math::mat4f subview_tm; //subview matrix of the scene viewport
   Viewport viewport; //viewport of the scene viewport
   PropertyMap properties; //viewport properties;
   TextureList textures; //viewport textures;
+
+  Impl()
+    : projection_tm(1.0f)
+    , subview_tm(1.0f)
+  {
+  }
 };
 
 SceneViewport::SceneViewport()
@@ -44,14 +53,31 @@ void SceneViewport::set_viewport(const low_level::Viewport& viewport)
   impl->viewport = viewport;
 }
 
-Camera::Pointer& SceneViewport::camera() const
+Node::Pointer& SceneViewport::view_node() const
 {
-  return impl->camera;
+  return impl->view_node;
 }
 
-void SceneViewport::set_camera(const scene::Camera::Pointer& camera)
+const math::mat4f& SceneViewport::projection_tm() const
 {
-  impl->camera = camera;
+  return impl->projection_tm;
+}
+
+const math::mat4f& SceneViewport::subview_tm() const
+{
+  return impl->subview_tm;
+}
+
+void SceneViewport::set_view_node(const scene::Node::Pointer& view_node, const math::mat4f& projection_tm, const math::mat4f& subview_tm)
+{
+  impl->view_node = view_node;
+  impl->projection_tm = projection_tm;
+  impl->subview_tm = subview_tm;
+}
+
+void SceneViewport::set_view_node(const scene::Camera::Pointer& camera)
+{
+  set_view_node(camera, camera->projection_matrix());
 }
 
 PropertyMap& SceneViewport::properties() const
@@ -91,13 +117,15 @@ struct PassEntry
   std::string name; //self pass name
   int priority; //priority of pass rendering
   PassArray dependencies; //dependent scene passes
-  FrameId rendered_frame_id; //rendered frame ID
+  FrameId prerendered_enumeration_id; //rendered frame ID
+  FrameId rendered_enumeration_id; //rendered frame ID
 
   PassEntry(const char* name, const ScenePassPtr& pass, int priority)
     : pass(pass)
     , name(name)
     , priority(priority)
-    , rendered_frame_id()
+    , prerendered_enumeration_id()
+    , rendered_enumeration_id()
   {
   }
 
@@ -115,47 +143,245 @@ struct ScenePassContextImpl: ScenePassContext
   using ScenePassContext::unbind;
 };
 
+/// Rendering stack entry for recursive scene traversing during prerendering
+struct SceneRenderQueueEntry
+{
+  SceneViewport viewport;
+  size_t nested_depth = 0;
+  ScenePassContextImpl passes_context;
+  std::shared_ptr<SceneRenderQueueEntry> first_child;
+  std::shared_ptr<SceneRenderQueueEntry> last_child;
+  std::shared_ptr<SceneRenderQueueEntry> next_child;
+
+  SceneRenderQueueEntry(ISceneRenderer& renderer, size_t nested_depth = 0)
+    : nested_depth(nested_depth)
+    , passes_context(renderer)
+  {
+  }
+
+  bool has_children() const { return first_child != nullptr; }
+
+  void reset()
+  {
+    nested_depth = 0;
+    first_child.reset();
+    last_child.reset();
+    next_child.reset();
+  }
+
+  void add_child(ISceneRenderer& renderer, const SceneViewport& viewport)
+  {
+    auto child = std::make_shared<SceneRenderQueueEntry>(renderer, nested_depth + 1);
+    child->viewport = viewport; //TODO: maybe clone viewport to avoid its change during nested renderings
+
+    if (last_child)
+    {
+      last_child->next_child = child;
+      last_child = child;
+    }
+    else
+    {
+      first_child = child;
+      last_child = child;
+    }
+  }
+};
+
 }
 
 /// Implementation details of scene renderer
-struct SceneRenderer::Impl : ISceneRenderer
+struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this<SceneRenderer::Impl>
 {
   Device render_device; //rendering device
   TextureList shared_textures; //shared textures
   MaterialList shared_materials; //shared materials
   FrameNodeList shared_frame_nodes; //shared frame_nodes
   common::PropertyMap shared_properties; //shared propertiess
-  ScenePassContextImpl passes_context; //scene rendering context
   PassArray passes; //scene rendering passes
+  size_t current_enumeration_id; //enumeration to avoid recursion lock
+  SceneRenderQueueEntry render_queue_root; //root of the render queue
+  SceneRenderQueueEntry* render_queue_current; //current entry of the render queue
+  bool is_in_rendering = false; //is scene renderer in rendering process
 
   Impl(const Device& device)
     : render_device(device)
-    , passes_context(*this)
+    , current_enumeration_id()
+    , render_queue_root(*this)
+    , render_queue_current()
   {
     passes.reserve(RESERVED_PASSES_COUNT);
   }
 
-  void render_pass(PassEntryPtr& pass_entry)
+  struct ViewportContextBindings
   {
-    FrameId current_frame_id = passes_context.current_frame_id();
+    BindingContext bindings;
+    ScenePassContextImpl& context;
 
-    if (pass_entry->rendered_frame_id >= current_frame_id)
+    ViewportContextBindings(ScenePassContextImpl& context) : context(context) { context.bind(&bindings); }
+    ~ViewportContextBindings() { context.unbind(&bindings); }
+  };
+
+  void prerender_viewport(SceneRenderQueueEntry& entry)
+  {
+    struct RenderQueueGuard
+    {
+      SceneRenderer::Impl& impl;
+      SceneRenderQueueEntry* prev_queue_entry;
+
+      RenderQueueGuard(SceneRenderer::Impl& impl, SceneRenderQueueEntry* entry)
+        : impl(impl)
+        , prev_queue_entry(impl.render_queue_current)
+      {
+        impl.render_queue_current = entry;
+      }
+
+      ~RenderQueueGuard()
+      {
+        impl.render_queue_current = prev_queue_entry;
+      }
+    };
+
+    RenderQueueGuard guard(*this, &entry);
+
+      //render passes
+
+    BindingContext renderer_bindings(shared_textures, shared_properties);
+    ScenePassContextImpl& context = entry.passes_context;
+    SceneViewport& scene_viewport = entry.viewport;
+    FrameBuffer& window_frame_buffer = render_device.window_frame_buffer();
+
+      //sync frame info
+
+    context.set_current_frame_id(render_queue_root.passes_context.current_frame_id());      
+
+      //setup viewport context
+
+    ViewportContextBindings viewport_bindings(context);
+
+    viewport_bindings.bindings.bind(&renderer_bindings);
+    viewport_bindings.bindings.bind(scene_viewport.properties());
+    viewport_bindings.bindings.bind(scene_viewport.textures());
+
+      //set camera
+
+    context.set_view_node(scene_viewport.view_node(), scene_viewport.projection_tm(), scene_viewport.subview_tm());
+
+      //prerender passes
+
+    current_enumeration_id++;
+
+    for (auto& pass_entry : passes)
+    {
+      prerender_pass(pass_entry, context);
+    }
+
+      //recursive prerender children entries
+
+    for (auto child = entry.first_child; child; child = child->next_child)
+    {
+      prerender_viewport(*child);
+    }
+  }
+
+  void render_viewport(SceneRenderQueueEntry& entry)
+  {
+      //recursive render children entries
+
+    for (auto child = entry.first_child; child; child = child->next_child)
+    {
+      render_viewport(*child);
+    }
+
+      //render passes
+
+    BindingContext renderer_bindings(shared_textures, shared_properties);
+    ScenePassContextImpl& context = entry.passes_context;
+    SceneViewport& scene_viewport = entry.viewport;
+    FrameBuffer& window_frame_buffer = render_device.window_frame_buffer();
+
+      //sync frame info
+
+    context.set_current_frame_id(render_queue_root.passes_context.current_frame_id());
+
+      //setup viewport context
+
+    ViewportContextBindings viewport_bindings(context);
+
+    viewport_bindings.bindings.bind(&renderer_bindings);
+    viewport_bindings.bindings.bind(scene_viewport.properties());
+    viewport_bindings.bindings.bind(scene_viewport.textures());
+
+      //set camera
+
+    context.set_view_node(scene_viewport.view_node(), scene_viewport.projection_tm(), scene_viewport.subview_tm());
+
+      //set framebuffer
+
+    const Viewport& viewport = scene_viewport.viewport();
+
+    if (!viewport.width && !viewport.height)
+    {
+      window_frame_buffer.reset_viewport();
+    }
+    else
+    {
+      window_frame_buffer.set_viewport(viewport);
+    }
+
+      //render passes
+
+    current_enumeration_id++;      
+
+    for (auto& pass_entry : passes)
+    {
+      render_pass(pass_entry, context);
+    }
+
+      //render frame nodes
+
+    context.root_frame_node().render(context);
+  }
+
+  void prerender_pass(PassEntryPtr& pass_entry, ScenePassContext& context)
+  {
+    if (pass_entry->prerendered_enumeration_id >= current_enumeration_id)
+      return;
+
+      //prerender dependencies
+
+    for (auto& dep_pass_entry : pass_entry->dependencies)
+    {
+      prerender_pass(dep_pass_entry, context);
+    }
+
+      //render pass
+
+    pass_entry->pass->prerender(context);
+
+      //update frame info
+
+    pass_entry->prerendered_enumeration_id = current_enumeration_id;
+  }
+
+  void render_pass(PassEntryPtr& pass_entry, ScenePassContext& context)
+  {
+    if (pass_entry->rendered_enumeration_id >= current_enumeration_id)
       return;
 
       //render dependencies
 
     for (auto& dep_pass_entry : pass_entry->dependencies)
     {
-      render_pass(dep_pass_entry);
+      render_pass(dep_pass_entry, context);
     }
 
       //render pass
 
-    pass_entry->pass->render(passes_context);
+    pass_entry->pass->render(context);
 
       //update frame info
 
-    pass_entry->rendered_frame_id = current_frame_id;
+    pass_entry->rendered_enumeration_id = current_enumeration_id;
   }
 
   PropertyMap& properties() override { return shared_properties; }
@@ -163,6 +389,7 @@ struct SceneRenderer::Impl : ISceneRenderer
   MaterialList& materials() override { return shared_materials; }
   FrameNodeList& frame_nodes() override { return shared_frame_nodes; } 
   Device& device() override { return render_device; }
+  SceneRenderer scene_renderer() override { return SceneRenderer(shared_from_this()); }
 };
 
 SceneRenderer::SceneRenderer(const Window& window, const DeviceOptions& options)
@@ -170,6 +397,11 @@ SceneRenderer::SceneRenderer(const Window& window, const DeviceOptions& options)
   Device device(window, options);
 
   impl = std::make_shared<Impl>(device);
+}
+
+SceneRenderer::SceneRenderer(const std::shared_ptr<Impl>& impl)
+  : impl(impl)
+{
 }
 
 Device& SceneRenderer::device() const
@@ -354,9 +586,51 @@ void SceneRenderer::remove_pass(const char* name)
   }), impl->passes.end());
 }
 
-void SceneRenderer::render(const SceneViewport& viewport)
+void SceneRenderer::render(const SceneViewport& scene_viewport)
 {
-  render(1, &viewport);
+    //process nested renderings (recursion)
+
+  if (impl->is_in_rendering)
+    throw Exception::format("Can't start nested rendering for scene viewport outside of prerendering stage");
+
+  if (impl->render_queue_current)
+  {
+    if (impl->render_queue_current->nested_depth >= MAX_NESTED_RENDER_DEPTH)
+      return;
+
+    impl->render_queue_current->add_child(*impl, scene_viewport);
+    return;
+  }
+
+    //set root render queue entry
+
+  impl->render_queue_root.viewport = scene_viewport;
+
+    //update frame info
+
+  impl->render_queue_root.passes_context.set_current_frame_id(impl->render_queue_root.passes_context.current_frame_id() + 1);
+
+    //prerender viewport
+
+  impl->prerender_viewport(impl->render_queue_root);
+
+    //render viewport
+
+  struct RenderingProcessGuard
+  {
+    Impl& impl;
+
+    RenderingProcessGuard(Impl& impl) : impl(impl) { impl.is_in_rendering = true; }
+    ~RenderingProcessGuard() { impl.is_in_rendering = false; }
+  };
+
+  RenderingProcessGuard guard(*impl);
+
+  impl->render_viewport(impl->render_queue_root);    
+
+    //cleanup
+
+  impl->render_queue_root.reset();
 }
 
 void SceneRenderer::render(size_t viewports_count, const SceneViewport* viewports)
@@ -364,73 +638,9 @@ void SceneRenderer::render(size_t viewports_count, const SceneViewport* viewport
   if (viewports_count)
     engine_check_null(viewports);
 
-    //update frame info
-
-  impl->passes_context.set_current_frame_id(impl->passes_context.current_frame_id() + 1);
-
-    //render passes
-
-  struct ViewportContextBindings
-  {
-    BindingContext bindings;
-    ScenePassContextImpl& context;
-
-    ViewportContextBindings(ScenePassContextImpl& context)
-      : context(context)
-    {
-      context.bind(&bindings);
-    }
-
-    ~ViewportContextBindings()
-    {
-      context.unbind(&bindings);
-    }
-  };
-
-  BindingContext renderer_bindings(impl->shared_textures, impl->shared_properties);
-  ScenePassContextImpl& context = impl->passes_context;
-  Device& device = impl->render_device;
-  FrameBuffer& window_frame_buffer = device.window_frame_buffer();
-
   for (size_t i=0; i<viewports_count; i++)
   {
-      //setup viewport context
-
-    const SceneViewport& scene_viewport = viewports[i];
-
-    ViewportContextBindings viewport_bindings(context);
-
-    viewport_bindings.bindings.bind(&renderer_bindings);
-    viewport_bindings.bindings.bind(scene_viewport.properties());
-    viewport_bindings.bindings.bind(scene_viewport.textures());
-
-      //set camera
-
-    context.set_view_node(scene_viewport.camera());
-
-      //set framebuffer
-
-    const Viewport& viewport = scene_viewport.viewport();
-
-    if (!viewport.width && !viewport.height)
-    {
-      window_frame_buffer.reset_viewport();
-    }
-    else
-    {
-      window_frame_buffer.set_viewport(viewport);
-    }
-
-      //render passes
-
-    for (auto& pass_entry : impl->passes)
-    {
-      impl->render_pass(pass_entry);
-    }
-
-      //render frame nodes
-
-    context.root_frame_node().render(context);
+    render(viewports[i]);
   }
 }
 

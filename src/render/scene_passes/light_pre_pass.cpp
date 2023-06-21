@@ -70,6 +70,10 @@ struct GeometryPass : IScenePass
     {
     }
 
+    void prerender(ScenePassContext& context)
+    {
+    }
+
     void render(ScenePassContext& context)
     {
       Node::Pointer root_node = context.root_node();

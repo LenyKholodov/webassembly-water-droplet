@@ -47,6 +47,10 @@ class ProjectilePass : IScenePass
       deps.push_back("Shadow Maps Rendering");
     }
 
+    void prerender(ScenePassContext& context)
+    {
+    }    
+
     void render(ScenePassContext& context)
     {
         //search for G-Buffer frame and add it to dependency list

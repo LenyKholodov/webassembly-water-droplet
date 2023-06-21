@@ -278,7 +278,7 @@ int main(void)
 
     SceneViewport scene_viewport;
 
-    scene_viewport.set_camera(camera);
+    scene_viewport.set_view_node(camera);
 
       //main loop
 

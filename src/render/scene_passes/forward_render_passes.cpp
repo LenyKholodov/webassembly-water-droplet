@@ -76,10 +76,6 @@ struct ForwardLightingPass : IScenePass
 
       visitor.traverse(*root_node);
 
-        //prerendering
-
-      prerender(context);
-
         //configure params
 
       setup_point_lights(visitor.point_lights(), context);

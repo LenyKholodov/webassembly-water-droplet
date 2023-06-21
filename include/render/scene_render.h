@@ -60,7 +60,7 @@ class ScenePassContext
     Node::Pointer view_node() const;
 
     /// Set current view node
-    void set_view_node(const Node::Pointer& view, const math::mat4f& projection_tm);
+    void set_view_node(const Node::Pointer& view, const math::mat4f& projection_tm, const math::mat4f& subview_tm = math::mat4f(1.0f));
 
     /// Set camera
     void set_view_node(const Camera::Pointer& view);
@@ -73,6 +73,9 @@ class ScenePassContext
 
     /// View & projection TM
     const math::mat4f& view_projection_tm() const;
+
+    /// Renderer
+    SceneRenderer renderer() const;
 
   protected:
     /// Constructor
@@ -159,6 +162,9 @@ class IScenePass
     /// Get dependencies (will be called ony once after the creation)
     virtual void get_dependencies(std::vector<std::string>& deps) = 0;
 
+    /// Scene prerendering (mirrors, subrenders)
+    virtual void prerender(ScenePassContext& context) = 0;
+
     /// Scene rendering
     virtual void render(ScenePassContext& context) = 0;
 };
@@ -195,11 +201,20 @@ class SceneViewport
     /// Set viewport
     void set_viewport(const low_level::Viewport&);
 
-    /// Camera
-    scene::Camera::Pointer& camera() const;
+    /// View node
+    scene::Node::Pointer& view_node() const;
 
-    /// Set camera
-    void set_camera(const scene::Camera::Pointer& camera);
+    /// Projection matrix
+    const math::mat4f& projection_tm() const;
+
+    /// View matrix
+    const math::mat4f& subview_tm() const;
+
+    /// Set view node
+    void set_view_node(const scene::Node::Pointer& camera, const math::mat4f& projection_tm, const math::mat4f& subview_tm = math::mat4f(1.0f));
+
+    /// Set view node
+    void set_view_node(const scene::Camera::Pointer& camera);
 
     /// Scene viewport properties
     common::PropertyMap& properties() const;
@@ -256,7 +271,10 @@ class SceneRenderer
     FrameNodeList& frame_nodes() const;
 
   private:
-    struct Impl;
+    struct Impl;  
+    SceneRenderer(const std::shared_ptr<Impl>&);
+
+  private:
     std::shared_ptr<Impl> impl;
 };
 

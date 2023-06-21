@@ -37,6 +37,10 @@ class ShadowPass : IScenePass
     {
     }
 
+    void prerender(ScenePassContext& context)
+    {
+    }
+
     void render(ScenePassContext& context)
     {
         //traverse scene

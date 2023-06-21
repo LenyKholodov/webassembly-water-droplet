@@ -99,26 +99,26 @@ Node::Pointer ScenePassContext::view_node() const
   return impl->view_node;
 }
 
-void ScenePassContext::set_view_node(const Node::Pointer& view, const math::mat4f& projection_tm)
+void ScenePassContext::set_view_node(const Node::Pointer& view, const math::mat4f& projection_tm, const math::mat4f& subview_tm)
 {
   impl->view_node = view;
 
   if (!view)
   {
     impl->root_node = nullptr;
-    impl->view_tm = 1.0f;
-    impl->projection_tm = 1.0f;
-    impl->view_projection_tm = 1.0f;
+    impl->view_tm = subview_tm;
+    impl->projection_tm = projection_tm;
+    impl->view_projection_tm = projection_tm * inverse(subview_tm);
 
     return;
   }
 
   impl->root_node = view->root();
-  impl->view_tm = inverse(view->world_tm());
+  impl->view_tm = inverse(view->world_tm() * subview_tm);
   impl->projection_tm = projection_tm;
   impl->view_projection_tm = projection_tm * impl->view_tm;
 
-  math::vec3f world_view_position = view->world_tm() * math::vec3f(0.0f);
+  math::vec3f world_view_position = view->world_tm() * subview_tm * math::vec3f(0.0f);
 
   impl->properties.set("viewMatrix", impl->view_tm);
   impl->properties.set("worldViewPosition", world_view_position);
