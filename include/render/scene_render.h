@@ -74,6 +74,12 @@ class ScenePassContext
     /// View & projection TM
     const math::mat4f& view_projection_tm() const;
 
+    /// Default framebuffer
+    const low_level::FrameBuffer& default_frame_buffer() const;
+
+    /// Set default framebuffer
+    void set_default_frame_buffer(const low_level::FrameBuffer& frame_buffer);
+
     /// Renderer
     SceneRenderer renderer() const;
 
@@ -192,14 +198,16 @@ class SceneViewport
 {
   public:
     /// Constructor
-    SceneViewport();
+    SceneViewport(const low_level::FrameBuffer& framebuffer);
 
     /// Viewport
     const low_level::Viewport& viewport() const;
-    low_level::Viewport& viewport();
 
-    /// Set viewport
-    void set_viewport(const low_level::Viewport&);
+    /// Framebuffer
+    const low_level::FrameBuffer& frame_buffer() const;
+
+    /// Set framebuffer
+    void set_frame_buffer(const low_level::FrameBuffer& frame_buffer);
 
     /// View node
     scene::Node::Pointer& view_node() const;
@@ -239,6 +247,9 @@ class SceneRenderer
   public:
     /// Constructor
     SceneRenderer(const application::Window& window, const low_level::DeviceOptions& options);
+
+    /// Create window based scene viewport
+    SceneViewport create_window_viewport() const;
 
     /// Rendering device
     low_level::Device& device() const;

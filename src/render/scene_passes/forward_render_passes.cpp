@@ -45,20 +45,6 @@ struct ForwardLightingPass : IScenePass
 
     void prerender(ScenePassContext& context)
     {
-      for (auto entity : visitor.prerender_entities())
-      {
-        if (entity->is_environment_map_required())
-          prerender_environment_map(*entity, context);
-      }
-    }
-
-    void prerender_environment_map(Entity& entity, ScenePassContext& context)
-    {
-        //create envmap data
-
-      EnvironmentMap* envmap = EnvironmentMap::get(entity, context, forward_lighting_program);
-
-      //todo: mirrors rendering
     }
 
     void render(ScenePassContext& context)
@@ -69,6 +55,12 @@ struct ForwardLightingPass : IScenePass
 
       if (!root_node)
         return;
+
+        //configure framebuffer
+
+      forward_lighting_pass.set_frame_buffer(context.default_frame_buffer());        
+
+        //clean pass
 
       forward_lighting_pass.remove_all_primitives();
 

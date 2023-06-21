@@ -199,6 +199,10 @@ struct DeferredLightingPass : IScenePass
       if (!root_node)
         return;
 
+        //configure framebuffer
+
+      deferred_lighting_pass.set_frame_buffer(context.default_frame_buffer());
+
         //traverse scene
 
       visitor.traverse(*root_node);

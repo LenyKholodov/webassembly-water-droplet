@@ -22,35 +22,36 @@ struct SceneViewport::Impl
   Node::Pointer view_node; //camera of the scene viewport
   math::mat4f projection_tm; //projection matrix of the scene viewport
   math::mat4f subview_tm; //subview matrix of the scene viewport
-  Viewport viewport; //viewport of the scene viewport
+  FrameBuffer frame_buffer; //framebuffer of the scene viewport
   PropertyMap properties; //viewport properties;
   TextureList textures; //viewport textures;
 
-  Impl()
+  Impl(const FrameBuffer& frame_buffer)
     : projection_tm(1.0f)
     , subview_tm(1.0f)
+    , frame_buffer(frame_buffer)
   {
   }
 };
 
-SceneViewport::SceneViewport()
-  : impl(std::make_shared<Impl>())
+SceneViewport::SceneViewport(const FrameBuffer& frame_buffer)
+  : impl(std::make_shared<Impl>(frame_buffer))
 {
 }
 
 const Viewport& SceneViewport::viewport() const
 {
-  return impl->viewport;
+  return impl->frame_buffer.viewport();
 }
 
-Viewport& SceneViewport::viewport()
+const engine::render::low_level::FrameBuffer& SceneViewport::frame_buffer() const
 {
-  return impl->viewport;
+  return impl->frame_buffer;
 }
 
-void SceneViewport::set_viewport(const low_level::Viewport& viewport)
+void SceneViewport::set_frame_buffer(const low_level::FrameBuffer& frame_buffer)
 {
-  impl->viewport = viewport;
+  impl->frame_buffer = frame_buffer;
 }
 
 Node::Pointer& SceneViewport::view_node() const
@@ -153,10 +154,12 @@ struct SceneRenderQueueEntry
   std::shared_ptr<SceneRenderQueueEntry> last_child;
   std::shared_ptr<SceneRenderQueueEntry> next_child;
 
-  SceneRenderQueueEntry(ISceneRenderer& renderer, size_t nested_depth = 0)
-    : nested_depth(nested_depth)
+  SceneRenderQueueEntry(ISceneRenderer& renderer, const SceneViewport& viewport, size_t nested_depth = 0)
+    : viewport(viewport)
+    , nested_depth(nested_depth)
     , passes_context(renderer)
   {
+    passes_context.set_default_frame_buffer(viewport.frame_buffer());
   }
 
   bool has_children() const { return first_child != nullptr; }
@@ -171,8 +174,7 @@ struct SceneRenderQueueEntry
 
   void add_child(ISceneRenderer& renderer, const SceneViewport& viewport)
   {
-    auto child = std::make_shared<SceneRenderQueueEntry>(renderer, nested_depth + 1);
-    child->viewport = viewport; //TODO: maybe clone viewport to avoid its change during nested renderings
+    auto child = std::make_shared<SceneRenderQueueEntry>(renderer, viewport, nested_depth + 1);
 
     if (last_child)
     {
@@ -206,7 +208,7 @@ struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this
   Impl(const Device& device)
     : render_device(device)
     , current_enumeration_id()
-    , render_queue_root(*this)
+    , render_queue_root(*this, SceneViewport(render_device.window_frame_buffer()))
     , render_queue_current()
   {
     passes.reserve(RESERVED_PASSES_COUNT);
@@ -390,6 +392,7 @@ struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this
   FrameNodeList& frame_nodes() override { return shared_frame_nodes; } 
   Device& device() override { return render_device; }
   SceneRenderer scene_renderer() override { return SceneRenderer(shared_from_this()); }
+  low_level::FrameBuffer& default_frame_buffer() override { return render_device.window_frame_buffer(); }
 };
 
 SceneRenderer::SceneRenderer(const Window& window, const DeviceOptions& options)
@@ -402,6 +405,11 @@ SceneRenderer::SceneRenderer(const Window& window, const DeviceOptions& options)
 SceneRenderer::SceneRenderer(const std::shared_ptr<Impl>& impl)
   : impl(impl)
 {
+}
+
+SceneViewport SceneRenderer::create_window_viewport() const
+{
+  return SceneViewport(impl->render_device.window_frame_buffer());
 }
 
 Device& SceneRenderer::device() const

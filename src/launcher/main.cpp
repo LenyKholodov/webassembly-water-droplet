@@ -276,7 +276,7 @@ int main(void)
 
       //scene viewport setup
 
-    SceneViewport scene_viewport;
+    SceneViewport scene_viewport = scene_renderer.create_window_viewport();
 
     scene_viewport.set_view_node(camera);
 
@@ -294,6 +294,7 @@ int main(void)
       if (!passes_initialized)
       {
         scene_renderer.add_pass("Forward Lighting");
+        scene_renderer.add_pass("Mirrors");
         //scene_renderer.add_pass("LPP-GeometryPass");
         //scene_renderer.add_pass("Deferred Lighting");
         //scene_renderer.add_pass("Projectile Maps Rendering");

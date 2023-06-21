@@ -17,6 +17,7 @@ struct ScenePassContext::Impl
   math::mat4f projection_tm; //projection matrix
   math::mat4f view_projection_tm; //projection * view matrix
   FrameNode root_frame_node; //root frame node
+  FrameBuffer default_frame_buffer; //default frame buffer
 
   Impl(ISceneRenderer& renderer)
     : renderer(renderer)
@@ -24,6 +25,7 @@ struct ScenePassContext::Impl
     , view_tm(1.0f)
     , projection_tm(1.0f)
     , view_projection_tm(1.0f)
+    , default_frame_buffer(renderer.default_frame_buffer())
   {
   }
 };
@@ -151,4 +153,14 @@ const math::mat4f& ScenePassContext::projection_tm() const
 const math::mat4f& ScenePassContext::view_projection_tm() const
 {
   return impl->view_projection_tm;
+}
+
+const engine::render::low_level::FrameBuffer& ScenePassContext::default_frame_buffer() const
+{
+  return impl->default_frame_buffer;
+}
+
+void ScenePassContext::set_default_frame_buffer(const low_level::FrameBuffer& frame_buffer)
+{
+  impl->default_frame_buffer = frame_buffer;
 }
