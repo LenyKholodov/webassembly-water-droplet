@@ -83,7 +83,7 @@ struct GeometryPass : IScenePass
 
         //traverse scene
 
-      visitor.traverse(*root_node);
+      visitor.traverse(*root_node, &context.options());
 
         //draw geometry
 
@@ -178,7 +178,7 @@ struct DeferredLightingPass : IScenePass
 
         //traverse scene
 
-      visitor.traverse(*root_node);
+      visitor.traverse(*root_node, &context.options());
 
         //configure params
 

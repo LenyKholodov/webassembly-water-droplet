@@ -21,6 +21,7 @@ struct ScenePassContext::Impl
   FrameNode root_frame_node; //root frame node
   FrameBuffer default_frame_buffer; //default frame buffer
   math::vec4f clear_color; //clear color
+  std::shared_ptr<ScenePassOptions> options; //pass options
 
   Impl(ISceneRenderer& renderer)
     : renderer(renderer)
@@ -204,4 +205,14 @@ void ScenePassContext::set_clear_color(const math::vec4f& color)
 SceneRenderer ScenePassContext::renderer() const
 {
   return impl->renderer.scene_renderer();
+}
+
+const ScenePassOptions& ScenePassContext::options() const
+{
+  return impl->options ? *impl->options : renderer().default_options();
+}
+
+void ScenePassContext::set_options(const std::shared_ptr<ScenePassOptions>& options)
+{
+  impl->options = options;
 }

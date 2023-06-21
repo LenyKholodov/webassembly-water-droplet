@@ -187,7 +187,7 @@ class SceneVisitor : private engine::scene::ISceneVisitor
     void reset();
 
     /// Traverse scene
-    void traverse(engine::scene::Node&);
+    void traverse(engine::scene::Node&, const ScenePassOptions* options = nullptr);
 
   private:
     void visit(engine::scene::Mesh&) override;

@@ -46,7 +46,7 @@ class MirrorsPrerenderPass : IScenePass
 
         //traverse scene
 
-      visitor.traverse(*root_node);
+      visitor.traverse(*root_node, &context.options());
 
         //process all mirrors
 
@@ -128,7 +128,12 @@ class MirrorsPrerenderPass : IScenePass
 
           //nested render
 
-//TODO: self exclude from rendering
+        std::shared_ptr<ScenePassOptions> options = std::make_shared<ScenePassOptions>();
+
+        options->excluded_nodes.insert(&*entity);
+
+        scene_viewport.set_options(options);
+
         context.renderer().render(scene_viewport);
 
           //iteration

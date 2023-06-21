@@ -67,7 +67,7 @@ struct ForwardLightingPass : IScenePass
 
         //traverse scene
 
-      visitor.traverse(*root_node);
+      visitor.traverse(*root_node, &context.options());
 
         //configure params
 

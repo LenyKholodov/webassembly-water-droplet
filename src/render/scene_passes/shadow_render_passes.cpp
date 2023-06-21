@@ -54,7 +54,7 @@ class ShadowPass : IScenePass
 
         //traverse scene
 
-      visitor.traverse(*root_node);
+      visitor.traverse(*root_node, &context.options());
 
         //enumerate spot lights and build shadows for them
 

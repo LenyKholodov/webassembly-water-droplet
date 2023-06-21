@@ -28,6 +28,7 @@ struct SceneViewport::Impl
   math::vec4f clear_color;   // clear color of the scene viewport
   PropertyMap properties;    // viewport properties;
   TextureList textures;      // viewport textures;
+  std::shared_ptr<ScenePassOptions> options; // rendering options
 
   Impl(const FrameBuffer &frame_buffer)
       : projection_tm(1.0f), subview_tm(1.0f), frame_buffer(frame_buffer), clear_color(0.0f, 0.0f, 0.0f, 1.0f)
@@ -117,6 +118,16 @@ void SceneViewport::set_textures(const low_level::TextureList &textures)
   impl->textures = textures;
 }
 
+const std::shared_ptr<ScenePassOptions>& SceneViewport::options() const
+{
+  return impl->options;
+}
+
+void SceneViewport::set_options(const std::shared_ptr<ScenePassOptions> &options)
+{
+  impl->options = options;
+}
+
 ///
 /// SceneRenderer
 ///
@@ -186,6 +197,8 @@ namespace
     {
       auto child = std::make_shared<SceneRenderQueueEntry>(renderer, viewport, nested_depth + 1);
 
+      child->passes_context.set_options(viewport.options());
+
       child->subframe_id = subframe_id;
 
       if (last_child)
@@ -217,6 +230,7 @@ struct SceneRenderer::Impl : ISceneRenderer, public std::enable_shared_from_this
   SceneRenderQueueEntry render_queue_root;     // root of the render queue
   SceneRenderQueueEntry *render_queue_current; // current entry of the render queue
   bool is_in_rendering = false;                // is scene renderer in rendering process
+  ScenePassOptions default_options;            // default rendering options
 
   Impl(const Device &device)
       : render_device(device), current_subframe_id(), current_enumeration_id(), render_queue_root(*this, SceneViewport(render_device.window_frame_buffer())), render_queue_current()
@@ -442,6 +456,11 @@ Device &SceneRenderer::device() const
   return impl->render_device;
 }
 
+const ScenePassOptions& SceneRenderer::default_options() const
+{
+  return impl->default_options;
+}
+
 size_t SceneRenderer::passes_count() const
 {
   return impl->passes.size();
@@ -638,6 +657,7 @@ void SceneRenderer::render(const SceneViewport &scene_viewport)
   // update frame info
 
   impl->render_queue_root.passes_context.set_current_frame_id(impl->render_queue_root.passes_context.current_frame_id() + 1);
+  impl->render_queue_root.passes_context.set_options(scene_viewport.options());
 
   // prerender viewport
 
@@ -660,6 +680,7 @@ void SceneRenderer::render(const SceneViewport &scene_viewport)
   // cleanup
 
   impl->render_queue_root.reset();
+  impl->render_queue_root.passes_context.set_options(std::shared_ptr<ScenePassOptions>());
 }
 
 void SceneRenderer::render(size_t viewports_count, const SceneViewport *viewports)

@@ -3,6 +3,7 @@
 #include <render/device.h>
 #include <scene/camera.h>
 
+#include <unordered_set>
 #include <memory>
 
 namespace engine {
@@ -21,6 +22,12 @@ class FrameNodeList;
 
 /// Frame identifier
 typedef size_t FrameId;
+
+/// Options for scene rendering
+struct ScenePassOptions
+{
+  std::unordered_set<Node*> excluded_nodes; //nodes, which should be excluded from rendering
+};
 
 /// Rendering scene passes context
 class ScenePassContext
@@ -97,6 +104,12 @@ class ScenePassContext
 
     /// Set default framebuffer
     void set_default_frame_buffer(const low_level::FrameBuffer& fb);
+
+    /// Rendering options
+    const ScenePassOptions& options() const;
+
+    /// Set rendering options
+    void set_options(const std::shared_ptr<ScenePassOptions>& options);
 
     /// Renderer
     SceneRenderer renderer() const;
@@ -269,6 +282,12 @@ class SceneViewport
     /// Set scene viewport textures
     void set_textures(const low_level::TextureList& textures);
 
+    /// Rendering options
+    const std::shared_ptr<ScenePassOptions>& options() const;
+
+    /// Set rendering options
+    void set_options(const std::shared_ptr<ScenePassOptions>& options);
+
   private:
     struct Impl;
     std::shared_ptr<Impl> impl;
@@ -313,6 +332,9 @@ class SceneRenderer
 
     /// Shared frame nodes
     FrameNodeList& frame_nodes() const;
+
+    /// Default rendering options
+    const ScenePassOptions& default_options() const;
 
   private:
     struct Impl;  
