@@ -42,6 +42,7 @@ const float LIGHTS_MIN_RANGE = 10.f;
 const float LIGHTS_MAX_RANGE = 50.f;
 const size_t MESHES_COUNT = 100;
 const float MESHES_POSITION_RADIUS = 3.f;
+const float DRAG_OFFSET_MULTIPLIER = 10.f;
 
 float frand()
 {
@@ -116,42 +117,6 @@ int main(void)
       }
 
       camera_move_direction += direction_change;
-    });
-
-    bool left_mouse_button_pressed = false;
-    double last_mouse_x;
-    double last_mouse_y;
-
-    window.set_mouse_move_handler([&](double x, double y) {
-      //double relative_x = x / window.width();
-      //double relative_y = y / window.height();
-
-      //engine_log_info("mouse move pos=(%.1f, %.1f) <-> (%.2f, %.2f)", x, y, relative_x, relative_y);
-
-      if (left_mouse_button_pressed)
-      {
-        double dx = x - last_mouse_x;
-        double dy = y - last_mouse_y;
-
-        camera_pitch += math::degree(dy * CAMERA_ROTATE_SPEED);
-        camera_yaw -= math::degree(dx * CAMERA_ROTATE_SPEED);
-
-        camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
-      }
-
-      last_mouse_x = x;
-      last_mouse_y = y;
-    });
-
-    window.set_mouse_button_handler([&](MouseButton button, bool pressed) {
-      //engine_log_info("mouse button=%d pressed=%d", button, pressed);
-      sound_player.play_music();
-
-      if (pressed)
-        sound_player.play_sound(SoundId::drop);
-
-      if (button == MouseButton_Left)
-        left_mouse_button_pressed = pressed;
     });
 
     float window_ratio = window.width() / (float) window.height();
@@ -281,6 +246,102 @@ int main(void)
     scene_viewport.set_view_node(camera);
     scene_viewport.set_clear_color(math::vec4f(0.0f, 0.0f, 0.0f, 1.0f));
 
+    bool left_mouse_button_pressed = false;
+    bool right_mouse_button_pressed = false;
+    double last_mouse_x;
+    double last_mouse_y;
+    float target_offset_x, target_offset_y, target_offset_z;
+
+    window.set_mouse_move_handler([&](double x, double y) {
+      //double relative_x = x / window.width();
+      //double relative_y = y / window.height();
+
+      //engine_log_info("mouse move pos=(%.1f, %.1f) <-> (%.2f, %.2f)", x, y, relative_x, relative_y);
+
+      double dx = x - last_mouse_x;
+      double dy = y - last_mouse_y;
+
+      if (right_mouse_button_pressed)
+      {
+        camera_pitch += math::degree(dy * CAMERA_ROTATE_SPEED);
+        camera_yaw -= math::degree(dx * CAMERA_ROTATE_SPEED);
+
+        camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
+      }
+
+      if (left_mouse_button_pressed)
+      {
+        //compute inverse view projection matrix
+        math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
+        //compute world-space offset for last drag
+        float normalized_dx = dx / window.width(),
+              normalized_dy = -dy / window.height();
+
+        math::vec4f center_world = inverse_view_projection * math::vec4f(0, 0, -1.f, 1.f),
+                    offset_world = inverse_view_projection * math::vec4f(normalized_dx, normalized_dy, -1.f, 1.f);
+
+        center_world /= center_world.w;
+        offset_world /= offset_world.w;
+
+        target_offset_x += (offset_world.x - center_world.x) * DRAG_OFFSET_MULTIPLIER;
+        target_offset_y += (offset_world.y - center_world.y) * DRAG_OFFSET_MULTIPLIER;
+        target_offset_z += (offset_world.z - center_world.z) * DRAG_OFFSET_MULTIPLIER;
+      }
+
+      last_mouse_x = x;
+      last_mouse_y = y;
+    });
+
+    window.set_mouse_button_handler([&](MouseButton button, bool pressed) {
+      //engine_log_info("mouse button=%d pressed=%d", button, pressed);
+      sound_player.play_music();
+
+      if (pressed)
+        sound_player.play_sound(SoundId::drop);
+
+      if (button == MouseButton_Left)
+      {
+        left_mouse_button_pressed = pressed;
+
+        if (pressed)
+        {
+          //compute inverse view projection matrix
+          math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
+          //transorm last_mouse_x, last_mouse_y to world space
+          float normalized_x = (last_mouse_x / window.width()) * 2.f - 1.f,
+                normalized_y = 1.f - (last_mouse_y / window.height()) * 2.f;
+
+          math::vec4f ray_start = inverse_view_projection * math::vec4f(normalized_x, normalized_y, -1.f, 1.f),
+                      ray_end = inverse_view_projection * math::vec4f(normalized_x, normalized_y, 1.f, 1.f);
+
+          ray_start /= ray_start.w;
+          ray_end /= ray_end.w;
+
+          world.inputGrab(ray_start.x, ray_start.y, ray_start.z, ray_end.x, ray_end.y, ray_end.z);
+
+          target_offset_x = 0.f;
+          target_offset_y = 0.f;
+          target_offset_z = 0.f;
+
+/*          math::vec4f camera_forward = camera->world_tm() * math::vec4f(0, 0, 1, 1);
+
+          engine_log_info("cursor pos = (%.2f, %.2f)", normalized_x, normalized_y);
+          engine_log_info("camera pos = (%.2f, %.2f, %.2f)", camera->position().x, camera->position().y, camera->position().z);
+          engine_log_info("camera forward = (%.2f, %.2f, %.2f)", camera_forward.x, camera_forward.y, camera_forward.z);
+          engine_log_info("ray_start=(%.2f, %.2f, %.2f, %.2f) ray_end=(%.2f, %.2f, %.2f, %.2f)",
+                          ray_start.x, ray_start.y, ray_start.z, ray_start.w,
+                          ray_end.x, ray_end.y, ray_end.z, ray_end.w);*/
+        }
+        else
+          world.inputRelease();
+      }
+
+      if (button == MouseButton_Right)
+        right_mouse_button_pressed = pressed;
+    });
+
       //main loop
 
     double last_time = app.time();
@@ -290,6 +351,7 @@ int main(void)
       if (window.should_close())
         app.exit();
 
+      world.inputDrag(target_offset_x, target_offset_y, target_offset_z);
       world.update();
 
       if (!passes_initialized)

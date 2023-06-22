@@ -28,6 +28,14 @@ const float GROUND_OFFSET = -7.f;
 const float LEAF_MASS = 1.0f;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 3;
 const char* DROPLET_HULL_MATERIAL = "droplet";
+const int COLLISION_GROUP_DROPLET = 1;
+const int COLLISION_GROUP_GROUND = 1 << 1;
+const int COLLISION_GROUP_LEAF = 1 << 2;
+const int COLLISION_MASK_DROPLET = COLLISION_GROUP_GROUND | COLLISION_GROUP_LEAF | COLLISION_GROUP_DROPLET;
+const int COLLISION_MASK_GROUND = COLLISION_GROUP_DROPLET;
+const int COLLISION_MASK_LEAF = COLLISION_GROUP_DROPLET;
+const float DRAG_FORCE_MULTIPLIER = 10.f;
+const float DRAG_MAX_FORCE = 2.f;
 
 //todo: remove motion states from rigid bodies
 
@@ -59,6 +67,8 @@ struct PhysBodySync
     const math::vec3f& position,
     const math::quatf& rotation,
     const scene::Mesh::Pointer& mesh,
+    int collision_group,
+    int collision_mask,
     const std::shared_ptr<btDiscreteDynamicsWorld>& dynamics_world)
     : mesh(mesh)
     , shape(shape)
@@ -73,7 +83,7 @@ struct PhysBodySync
     btRigidBody::btRigidBodyConstructionInfo rb_info(mass, motion_state.get(), shape.get(), btVector3(local_intertia[0], local_intertia[1], local_intertia[2]));
     body = std::make_shared<btRigidBody>(rb_info);
 
-    dynamics_world->addRigidBody(body.get());
+    dynamics_world->addRigidBody(body.get(), collision_group, collision_mask);
   }  
 };
 
@@ -146,6 +156,9 @@ struct World::Impl
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
+  btRigidBody* grabbed_object;
+  btVector3 grabbed_object_pos_world;
+  btVector3 grabbed_object_pos_local;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -156,6 +169,7 @@ struct World::Impl
     , solver(new btSequentialImpulseConstraintSolver())
     , dynamics_world(new btDiscreteDynamicsWorld(dispatcher.get(), broadphase.get(), solver.get(), collision_configuration.get()))
     , droplet_debug_particle_mesh(media::geometry::MeshFactory::create_sphere("mtl1", DROPLET_PARTICLE_RADIUS))
+    , grabbed_object(0)
   {
       //load materials
 
@@ -250,7 +264,7 @@ struct World::Impl
     ground_transform.setIdentity();
     ground_transform.setOrigin(btVector3(0, GROUND_OFFSET, 0));
 
-    phys_bodies.push_back(std::make_shared<PhysBodySync>(ground_shape, 0.f, math::vec3f(0.0f), math::vec3f(0, GROUND_OFFSET, 0), math::quatf(), floor, dynamics_world));
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(ground_shape, 0.f, math::vec3f(0.0f), math::vec3f(0, GROUND_OFFSET, 0), math::quatf(), floor, COLLISION_GROUP_GROUND, COLLISION_MASK_GROUND, dynamics_world));
   }
 
   void add_stem(const math::vec3f& position, const math::quatf& rotation)
@@ -346,7 +360,7 @@ struct World::Impl
         bt_local_inertia *= LEAF_MASS;
         math::vec3f local_inertia(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
 
-        phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, position, rotation, mesh, dynamics_world));
+        phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, position, rotation, mesh, COLLISION_GROUP_LEAF, COLLISION_MASK_LEAF, dynamics_world));
 
           //find pivot point for constraint
 
@@ -443,7 +457,7 @@ struct World::Impl
     //mesh->set_mesh(droplet_debug_particle_mesh);
     mesh->bind_to_parent(*scene_root);
 
-    phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, dynamics_world));
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, COLLISION_GROUP_DROPLET, COLLISION_MASK_DROPLET, dynamics_world));
 
     droplet_particles.push_back(phys_bodies.back());
   }
@@ -625,6 +639,67 @@ struct World::Impl
 	  //engine_log_debug("world pos object = %f,%f,%f\n", float(transform.getOrigin().getX()), float(transform.getOrigin().getY()), float(transform.getOrigin().getZ())); 
     }
   }
+
+  /// Input control
+  void inputGrab(float ray_start_x, float ray_start_y, float ray_start_z, float ray_end_x, float ray_end_y, float ray_end_z)
+  {
+    //do bullet physics raycast to find leaf under click
+    btVector3 ray_start(ray_start_x, ray_start_y, ray_start_z), ray_end(ray_end_x, ray_end_y, ray_end_z);
+    btCollisionWorld::ClosestRayResultCallback raycast_callback(ray_start, ray_end);
+
+    raycast_callback.m_collisionFilterMask = COLLISION_GROUP_LEAF;
+
+    dynamics_world->rayTest(ray_start, ray_end, raycast_callback);
+
+    if (raycast_callback.m_collisionObject != 0)
+    {
+      //calculate object local position
+      btVector3 local_hit_pos = raycast_callback.m_collisionObject->getWorldTransform().inverse() * raycast_callback.m_hitPointWorld;
+
+//      engine_log_info("Raycast hit object at %f %f %f", raycast_callback.m_hitPointWorld.getX(), raycast_callback.m_hitPointWorld.getY(), raycast_callback.m_hitPointWorld.getZ());
+//      engine_log_info("Raycast hit object at local pos at %f %f %f", local_hit_pos.getX(), local_hit_pos.getY(), local_hit_pos.getZ());
+
+      //We use only btRigidBody for collision objects, so safe to use static_cast here
+      grabbed_object = static_cast<btRigidBody*>(const_cast<btCollisionObject*>(raycast_callback.m_collisionObject));
+      grabbed_object_pos_world = raycast_callback.m_hitPointWorld;
+      grabbed_object_pos_local = local_hit_pos;
+    }
+/*    else
+    {
+      engine_log_info("Raycast hit nothing");
+    }*/
+  }
+
+  void inputDrag(float target_offset_x, float target_offset_y, float target_offset_z)
+  {
+    if (!grabbed_object)
+      return;
+
+    //calculate distance from current grabbed position to target position
+    btVector3 target_world_pos = grabbed_object_pos_world + btVector3(target_offset_x, target_offset_y, target_offset_z);
+    btVector3 current_world_pos = grabbed_object->getWorldTransform() * grabbed_object_pos_local;
+    btVector3 delta = target_world_pos - current_world_pos;
+    btVector3 force = delta * DRAG_FORCE_MULTIPLIER;
+
+    //limit force to max force
+    if (force.length2() > DRAG_MAX_FORCE * DRAG_MAX_FORCE)
+      force = force.normalize() * DRAG_MAX_FORCE;
+
+    grabbed_object->activate(true);
+    grabbed_object->applyForce(force, current_world_pos - grabbed_object->getCenterOfMassPosition());
+
+/*    engine_log_info("grabbed_object_pos_world %.2f %.2f %.2f", grabbed_object_pos_world.getX(), grabbed_object_pos_world.getY(), grabbed_object_pos_world.getZ());
+    engine_log_info("current_world_pos %.2f %.2f %.2f", current_world_pos.getX(), current_world_pos.getY(), current_world_pos.getZ());
+    engine_log_info("target_offset %.2f %.2f %.2f", target_offset_x, target_offset_y, target_offset_z);
+    engine_log_info("target_world_pos %.2f %.2f %.2f", target_world_pos.getX(), target_world_pos.getY(), target_world_pos.getZ());
+    engine_log_info("delta %.2f %.2f %.2f", delta.getX(), delta.getY(), delta.getZ());
+    engine_log_info("applyForce %.2f %.2f %.2f!!!", (float)(delta.getX() * DRAG_FORCE_MULTIPLIER), (float)(delta.getY() * DRAG_FORCE_MULTIPLIER), (float)(delta.getZ() * DRAG_FORCE_MULTIPLIER)); */
+  }
+
+  void inputRelease()
+  {
+    grabbed_object = 0;
+  }
 };
 
 World::World(scene::Node::Pointer scene_root, SceneRenderer& scene_render)
@@ -640,4 +715,20 @@ World::~World()
 void World::update()
 {
   impl->update();
+}
+
+/// Input control
+void World::inputGrab(float ray_start_x, float ray_start_y, float ray_start_z, float ray_end_x, float ray_end_y, float ray_end_z)
+{
+  impl->inputGrab(ray_start_x, ray_start_y, ray_start_z, ray_end_x, ray_end_y, ray_end_z);
+}
+
+void World::inputDrag(float target_offset_x, float target_offset_y, float target_offset_z)
+{
+  impl->inputDrag(target_offset_x, target_offset_y, target_offset_z);
+}
+
+void World::inputRelease()
+{
+  impl->inputRelease();
 }
