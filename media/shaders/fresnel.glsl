@@ -21,10 +21,11 @@ varying vec3 refractionDir;
 varying vec3 reflectionDir;
 varying float fresnel;
 
-//const float eta = 0.2;
-const float eta = 0.75;
+const float eta = 0.0;
+//const float eta = 0.75;
 //const float eta = 0.05;
 const float fresnelPower = 5.0;
+//const float F = 0.05;
 const float F = 0.05;
 
 void main()

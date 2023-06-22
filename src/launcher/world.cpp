@@ -26,11 +26,12 @@ const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 5;
-const size_t MIN_DROPLET_PARTICLES_COUNT = 3;
+const size_t DROPLET_GENERATION_INTERVAL = 15000;
+const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 200;
 static size_t PARALLELS_COUNT = 7, MERIDIANS_COUNT = 7, LAYERS_COUNT = 1;
-const size_t MIN_PARTICLES_COUNT = PARALLELS_COUNT * MERIDIANS_COUNT * LAYERS_COUNT / 3;
+const size_t MIN_PARTICLES_COUNT = PARALLELS_COUNT * MERIDIANS_COUNT * LAYERS_COUNT;
 const math::vec3f LEAVES_SCALE(0.1f);
 const float LEAF_MASS = 1.0f;
 const math::vec3f STEAM_POSITION(-3.0f, 0, 3.0f);
@@ -49,7 +50,7 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const float COLLISION_MARGIN = 0.001f;
-const float FRICTION = 0.9;
+const float FRICTION = 0.5;
 
 const float LIGHTS_MIN_INTENSITY = 0.35f;
 const float LIGHTS_MAX_INTENSITY = 1;
@@ -189,6 +190,7 @@ struct World::Impl
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
+  clock_t last_droplet_generated_time = 0;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -486,7 +488,13 @@ struct World::Impl
     if (!leaves.size())
       return;
 
-    size_t leaf_index = rand() % leaves.size();
+    if (clock() - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
+      return;
+
+    last_droplet_generated_time = clock();
+
+    //size_t leaf_index = rand() % leaves.size();
+    size_t leaf_index = 9 % leaves.size();
 
     Leaf& leaf = leaves[leaf_index];
 
@@ -538,7 +546,7 @@ struct World::Impl
 
     particle.body->setFriction(FRICTION);
     particle.body->setSleepingThresholds(DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD, DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD);
-    particle.body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
+    //particle.body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
 
     droplet_particles.push_back(phys_bodies.back());
   }
@@ -562,7 +570,7 @@ struct World::Impl
       float inv_mass = body->getInvMass();
       float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
 
-      static const float TIME_STEP = 0.1f;
+      static const float TIME_STEP = 0.05f;
       static const float FORCE_FACTOR = 0.1f;
       static const float TORQUE_FACTOR = 0.01f;
 
@@ -605,7 +613,7 @@ struct World::Impl
       {
         float distance = length(droplet->center - position);
 
-        static const float CLUSTER_RADIUS = DROPLET_RADIUS * 2.5f;
+        static const float CLUSTER_RADIUS = DROPLET_RADIUS;
 
         if (distance < CLUSTER_RADIUS)
         {
@@ -703,7 +711,7 @@ struct World::Impl
 
       for (const math::vec3f& point : droplet->points)
       {
-        if (length(point - droplet->center) > length(sigma) * 2.0f)
+        if (length(point - droplet->center) > length(sigma))
           continue;
         droplet->hull_builder.add_point(point);
       }
@@ -752,7 +760,7 @@ struct World::Impl
       droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL);
     }
 
-    //apply forces to droplets
+    //apply sd to droplets
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
@@ -765,8 +773,8 @@ struct World::Impl
 
         static const float FORCE_DISTANCE = DROPLET_RADIUS * 2.0f;
 
-        static const float DROPLET_FORCE = 0.0002f;
-        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 2.0f;
+        static const float DROPLET_FORCE = 0.0001f;
+        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 3.0f;
         static const float TIME_STEP = 1.0f / 60.0f;
 
         math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);

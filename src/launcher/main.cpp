@@ -219,6 +219,7 @@ int main(void)
     double last_mouse_x;
     double last_mouse_y;
     float target_offset_x, target_offset_y, target_offset_z;
+    float start_grab_x, start_grab_y, start_grab_z;
 
     window.set_mouse_move_handler([&](double x, double y) {
       //double relative_x = x / window.width();
@@ -242,6 +243,25 @@ int main(void)
         //compute inverse view projection matrix
         math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
 
+        float normalized_x = (x / window.width()) * 2.f - 1.f,
+              normalized_y = 1.f - (y / window.height()) * 2.f;
+
+        math::vec4f ray_start = inverse_view_projection * math::vec4f(normalized_x, normalized_y, -1.f, 1.f);
+
+        ray_start /= ray_start.w;
+
+        target_offset_x = ray_start.x - start_grab_x;
+        target_offset_y = ray_start.y - start_grab_y;
+        target_offset_z = ray_start.z - start_grab_z;
+      }
+
+
+#if 0
+      if (left_mouse_button_pressed)
+      {
+        //compute inverse view projection matrix
+        math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
         //compute world-space offset for last drag
         float normalized_dx = dx / window.width(),
               normalized_dy = -dy / window.height();
@@ -256,7 +276,7 @@ int main(void)
         target_offset_y += (offset_world.y - center_world.y) * DRAG_OFFSET_MULTIPLIER;
         target_offset_z += (offset_world.z - center_world.z) * DRAG_OFFSET_MULTIPLIER;
       }
-
+#endif
       last_mouse_x = x;
       last_mouse_y = y;
     });
@@ -292,6 +312,10 @@ int main(void)
           target_offset_x = 0.f;
           target_offset_y = 0.f;
           target_offset_z = 0.f;
+
+          start_grab_x = ray_start.x;
+          start_grab_y = ray_start.y;
+          start_grab_z = ray_start.z;
 
 /*          math::vec4f camera_forward = camera->world_tm() * math::vec4f(0, 0, 1, 1);
 
