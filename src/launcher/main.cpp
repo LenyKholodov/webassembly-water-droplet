@@ -237,7 +237,7 @@ int main(void)
 
         camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
       }
-
+#if 0
       if (left_mouse_button_pressed)
       {
         //compute inverse view projection matrix
@@ -254,9 +254,8 @@ int main(void)
         target_offset_y = ray_start.y - start_grab_y;
         target_offset_z = ray_start.z - start_grab_z;
       }
+#endif
 
-
-#if 0
       if (left_mouse_button_pressed)
       {
         //compute inverse view projection matrix
@@ -276,7 +275,7 @@ int main(void)
         target_offset_y += (offset_world.y - center_world.y) * DRAG_OFFSET_MULTIPLIER;
         target_offset_z += (offset_world.z - center_world.z) * DRAG_OFFSET_MULTIPLIER;
       }
-#endif
+
       last_mouse_x = x;
       last_mouse_y = y;
     });

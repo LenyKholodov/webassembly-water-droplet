@@ -10,6 +10,7 @@
 #include "hull/hull.h"
 
 #include <list>
+#include <ctime>
 
 using namespace engine::common;
 using namespace engine::render::scene;
@@ -26,15 +27,16 @@ const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 5;
-const size_t DROPLET_GENERATION_INTERVAL = 15000;
+const size_t DROPLET_GENERATION_INTERVAL = 15 * CLOCKS_PER_SEC;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 200;
-static size_t PARALLELS_COUNT = 7, MERIDIANS_COUNT = 7, LAYERS_COUNT = 1;
-const size_t MIN_PARTICLES_COUNT = PARALLELS_COUNT * MERIDIANS_COUNT * LAYERS_COUNT;
+static size_t PARALLELS_COUNT = 6, MERIDIANS_COUNT = 6, LAYERS_COUNT = 1;
+const size_t MAX_PARTICLES_COUNT = 90;
 const math::vec3f LEAVES_SCALE(0.1f);
 const float LEAF_MASS = 1.0f;
 const math::vec3f STEAM_POSITION(-3.0f, 0, 3.0f);
+const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
 
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
@@ -50,10 +52,10 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const float COLLISION_MARGIN = 0.001f;
-const float FRICTION = 0.5;
+const float FRICTION = 0.4;
 
 const float LIGHTS_MIN_INTENSITY = 0.35f;
-const float LIGHTS_MAX_INTENSITY = 1;
+const float LIGHTS_MAX_INTENSITY = 0.9;
 const float LIGHTS_MIN_RANGE = 3.5;
 const float LIGHTS_MAX_RANGE = 4.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 0.75, 0.25);
@@ -191,6 +193,7 @@ struct World::Impl
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
   clock_t last_droplet_generated_time = 0;
+  clock_t last_debug_dump_time = 0;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -488,7 +491,10 @@ struct World::Impl
     if (!leaves.size())
       return;
 
-    if (clock() - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
+    if (droplet_particles.size() > MAX_PARTICLES_COUNT)
+      return;
+
+    if (last_droplet_generated_time && clock() - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
       return;
 
     last_droplet_generated_time = clock();
@@ -553,14 +559,21 @@ struct World::Impl
 
   void update()
   {
+      //debug dump
+
+    if (clock() - last_debug_dump_time > DEBUG_DUMP_INTERVAL)
+    {
+      last_debug_dump_time = clock();
+      engine_log_debug("Droplets count: %d (particles count %d)", droplets.size(), droplet_particles.size());
+    }
+
       //step the simulation
 
     dynamics_world->stepSimulation(1.f / 60.f, 10);
 
       //generate droplets
 
-    if (droplet_particles.size() < MIN_PARTICLES_COUNT)
-      generate_droplet();    
+    generate_droplet();    
 
       //update leaves
 
@@ -679,8 +692,6 @@ struct World::Impl
 
     //configure droplets
 
-    //engine_log_debug("Droplets count: %d (particles count %d)", droplets.size(), droplet_particles.size());
-
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
       math::vec3f center(0.0f);
@@ -745,9 +756,18 @@ struct World::Impl
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
       if (droplet->points.size() < MIN_DROPLET_PARTICLES_COUNT)
+      {
         droplet->remove_counter++;
+
+        if (!DROPLET_DEBUG_DRAW)
+          droplet->hull_mesh->unbind();
+      }
       else
+      {
+        if (!DROPLET_DEBUG_DRAW)
+          droplet->hull_mesh->bind_to_parent(*scene_root);
         droplet->remove_counter = 0;
+      }
     }
 
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),
@@ -773,8 +793,8 @@ struct World::Impl
 
         static const float FORCE_DISTANCE = DROPLET_RADIUS * 2.0f;
 
-        static const float DROPLET_FORCE = 0.0001f;
-        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 3.0f;
+        static const float DROPLET_FORCE = 0.0003f;
+        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 5.0f;
         static const float TIME_STEP = 1.0f / 60.0f;
 
         math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);
