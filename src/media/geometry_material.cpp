@@ -21,11 +21,25 @@ struct Material::Impl
   PropertyMap properties; //shader properties
   TextureDict textures_dict; //dictionary of textures
   TextureArray textures_list; //list of textures
+  std::string shader_tags; //shader tags
 };
 
 Material::Material()
   : impl(std::make_shared<Impl>())
 {
+}
+
+const char* Material::shader_tags() const
+{
+  return impl->shader_tags.c_str();
+}
+
+void Material::set_shader_tags(const char* tags)
+{
+  if (!tags)
+    tags = "";
+
+  impl->shader_tags = tags;
 }
 
 const PropertyMap& Material::properties() const

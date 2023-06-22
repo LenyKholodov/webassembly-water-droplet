@@ -26,7 +26,7 @@ const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
 const float LEAF_MASS = 1.0f;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 3;
-const char* DROPLET_HULL_MATERIAL = "mtl1";
+const char* DROPLET_HULL_MATERIAL = "droplet";
 
 //todo: remove motion states from rigid bodies
 
@@ -144,6 +144,7 @@ struct World::Impl
   std::vector<Leaf> leaves;
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
+  Material droplet_material;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -186,6 +187,16 @@ struct World::Impl
 
       materials.insert(primitive.material.c_str(), render_material);
     }
+
+      //configure droplet material
+
+    droplet_material.set_shader_tags("fresnel");
+    droplet_material.set_textures(materials.find("mtl1")->textures());
+    droplet_material.set_properties(materials.find("mtl1")->properties());
+
+      //create ground
+
+    materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
 
       //scale mesh
 

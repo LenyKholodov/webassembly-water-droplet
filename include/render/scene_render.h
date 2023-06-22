@@ -141,6 +141,10 @@ class FrameNode
     /// lower priorities render earlier
     void add_pass(const low_level::Pass&, int priority = 0);
 
+    /// Add pass group
+    /// lower priorities render earlier
+    void add_pass_group(const low_level::PassGroup&, int priority_base = 0);
+
     /// Add dependent frames
     /// this frame will be rendered after all dependent frames
     void add_dependency(const FrameNode& dependent_frame);

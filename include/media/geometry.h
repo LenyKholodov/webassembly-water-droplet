@@ -165,6 +165,12 @@ class Material
     /// Constructor
     Material();
 
+    /// Shader tags
+    const char* shader_tags() const;
+
+    /// Set shader tags
+    void set_shader_tags(const char* tags);
+
     /// Properties
     const common::PropertyMap& properties() const;
 

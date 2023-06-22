@@ -15,6 +15,8 @@ namespace passes {
 ///
 
 static const char* FORWARD_LIGHTING_PROGRAM_FILE = "media/shaders/forward_lighting.glsl";
+//static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
+static const char* FRESNEL_PROGRAM_FILE = "media/shaders/forward_lighting.glsl";
 
 ///
 /// Forward lighting pass
@@ -25,9 +27,18 @@ struct ForwardLightingPass : IScenePass
   public:
     ForwardLightingPass(SceneRenderer& renderer, Device& device)
       : forward_lighting_program(device.create_program_from_file(FORWARD_LIGHTING_PROGRAM_FILE))
+      , fresnel_program(device.create_program_from_file(FRESNEL_PROGRAM_FILE))
       , forward_lighting_pass(device.create_pass(forward_lighting_program))
+      , fresnel_pass(device.create_pass(fresnel_program))
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+
+      fresnel_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+      fresnel_pass.set_clear_flags(Clear_None);
+
+      size_t default_pass_index = pass_group.add_pass(nullptr, forward_lighting_pass, 0);
+      pass_group.add_pass("fresnel", fresnel_pass, 1);
+      pass_group.set_default_pass(default_pass_index);
 
       engine_log_debug("Forward Lighting pass has been created");
     }
@@ -60,10 +71,12 @@ struct ForwardLightingPass : IScenePass
 
       forward_lighting_pass.set_frame_buffer(context.default_frame_buffer());
       forward_lighting_pass.set_clear_color(context.clear_color());
+      fresnel_pass.set_frame_buffer(context.default_frame_buffer());
 
         //clean pass
 
       forward_lighting_pass.remove_all_primitives();
+      fresnel_pass.remove_all_primitives();
 
         //traverse scene
 
@@ -83,7 +96,7 @@ struct ForwardLightingPass : IScenePass
 
         //add this frame to root frame
 
-      frame.add_pass(forward_lighting_pass);
+      frame.add_pass_group(pass_group);
       context.root_frame_node().add_dependency(frame);
 
         //clear data
@@ -112,7 +125,7 @@ struct ForwardLightingPass : IScenePass
 
         //add mesh to pass
 
-      forward_lighting_pass.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count());
+      pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count());
     }
 
     void setup_point_lights(const PointLightArray& lights, ScenePassContext& context)
@@ -208,10 +221,13 @@ struct ForwardLightingPass : IScenePass
           //TODO: texture arrays binding to shader program
         forward_lighting_pass.textures().remove("shadowTexture");
         forward_lighting_pass.textures().insert("shadowTexture", shadow->shadow_texture);
+        fresnel_pass.textures().remove("shadowTexture");
+        fresnel_pass.textures().insert("shadowTexture", shadow->shadow_texture);
 
         float tex_size_step = 1.0f / shadow->shadow_texture.width();
 
         forward_lighting_pass.properties().set("shadowMapPixelSize", math::vec2f(tex_size_step));
+        fresnel_pass.properties().set("shadowMapPixelSize", math::vec2f(tex_size_step));
 
         frame.add_dependency(shadow->shadow_frame);
         
@@ -256,7 +272,10 @@ struct ForwardLightingPass : IScenePass
 
   private:
     Program forward_lighting_program;
+    Program fresnel_program;
     Pass forward_lighting_pass;
+    Pass fresnel_pass;
+    PassGroup pass_group;
     FrameNode frame;    
     SceneVisitor visitor;
     Vec3fArray point_light_positions;

@@ -22,8 +22,9 @@ struct PassEntry
 {
   Pass pass; //low level rendering pass
   int priority; //rendering priority
+  PropertyMap group_properties; //pass group properties
 
-  PassEntry(const Pass& pass, int priority)
+  PassEntry(const Pass& pass, int priority, const PropertyMap& group_properties)
     : pass(pass)
     , priority(priority)
   {
@@ -48,6 +49,7 @@ struct FrameNode::Impl
   PropertyMap properties; //frame properties
   TextureList textures; //frame textures
   FrameArray deps; //frames which this frames depends on
+  common::PropertyMap default_group_properties; //default pass group properties
 
   Impl()
     : rendered_frame_id()
@@ -72,7 +74,22 @@ size_t FrameNode::passes_count() const
 
 void FrameNode::add_pass(const Pass& pass, int priority)
 {
-  impl->passes.push_back(PassEntry(pass, priority));
+  impl->passes.push_back(PassEntry(pass, priority, impl->default_group_properties));
+
+  impl->need_sort_passes = true;
+}
+
+void FrameNode::add_pass_group(const PassGroup& group, int priority_offset)
+{
+  const common::PropertyMap& group_properties = group.properties();
+
+  for (size_t i=0, count=group.passes_count(); i<count; ++i)
+  {
+    int priority = group.pass_priority(i) + priority_offset;
+    Pass pass = group.pass(i);
+  
+    impl->passes.push_back(PassEntry(pass, priority, group_properties));
+  }
 
   impl->need_sort_passes = true;
 }
@@ -136,11 +153,13 @@ void FrameNode::render(ScenePassContext& context)
 
     //render this frame
 
-  BindingContext bindings(&context.bindings(), impl->properties, impl->textures);
+  BindingContext frame_bindings(&context.bindings(), impl->properties, impl->textures);
 
   for (auto& pass : impl->passes)
   {
-    pass.pass.render(&bindings);
+    BindingContext group_bindings(&frame_bindings, pass.group_properties);
+
+    pass.pass.render(&group_bindings);
   }
 
     //update frame info

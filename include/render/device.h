@@ -204,8 +204,13 @@ class Material
     /// Constructor
     Material();
 
+    /// Shader tags
+    const char* shader_tags() const;
+    void set_shader_tags(const char* tags);
+
     /// Textures
     const TextureList& textures() const;
+    void set_textures(const TextureList& textures);
 
     /// Properties
     const PropertyMap& properties() const;
@@ -626,7 +631,7 @@ class Pass
     /// Number of added primitives
     size_t primitives_count() const;
 
-    //// Default primitive properties
+    /// Default primitive properties
     static common::PropertyMap& default_primitive_properties();
 
     /// Add primitive to a pass
@@ -655,6 +660,56 @@ class Pass
 
     /// Render pass
     void render(const BindingContext* = nullptr);
+
+  private:
+    struct Impl;
+    std::shared_ptr<Impl> impl;
+};
+
+/// Pass group
+class PassGroup
+{
+  public:
+    /// Constructor
+    PassGroup();
+
+    /// Destructor
+    ~PassGroup();
+
+    /// Passes count
+    size_t passes_count() const;
+
+    /// Pass access
+    const Pass& pass(size_t index) const;
+
+    /// Pass priority
+    int pass_priority(size_t index) const;
+
+    /// Add pass dispatching
+    size_t add_pass(const char* shader_tags, const Pass& pass, int priority = 0);
+
+    /// Remove pass dispatching
+    void remove_pass(size_t pass_index);
+
+    /// Remove all passes
+    void remove_all_passes();
+
+    /// Default pass
+    int default_pass() const;
+
+    /// Set default pass
+    void set_default_pass(int pass_index);
+
+    /// Pass properties
+    PropertyMap& properties() const;
+
+    /// Add mesh for dispatching and rendering
+    void add_mesh(
+      const Mesh& mesh,
+      const math::mat4f& model_tm = math::mat4f(1.0f),
+      size_t first_primitive=0,
+      size_t primitives_count=(size_t)-1,
+      const common::PropertyMap& properties = Pass::default_primitive_properties());
 
   private:
     struct Impl;
