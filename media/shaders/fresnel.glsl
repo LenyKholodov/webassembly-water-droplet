@@ -16,6 +16,15 @@ varying vec4 normal;
 varying vec4 color;
 varying vec2 texCoord;
 
+varying vec3 refractionDir;
+varying vec3 reflectionDir;
+varying float fresnel;
+
+const float eta = 0.2;
+//const float eta = 0.75;
+const float fresnelPower = 5.0;
+const float F = 0.05;
+
 void main()
 {
   gl_Position = MVP * vec4(vPosition, 1.0);
@@ -24,6 +33,11 @@ void main()
   normal = modelMatrix * vec4 (vNormal, 0.0);
   color = vColor;
   texCoord = vTexCoord;
+
+  vec3 inVec = -eyeDirection.xyz;
+  reflectionDir = reflect(inVec, normal.xyz);
+  refractionDir = refract(inVec, normal.xyz, eta);
+  fresnel = clamp(F + (1.0 - F) * pow(1.0 + dot(inVec, normalize(normal.xyz)), fresnelPower), 0.0, 1.0);
 }
 
 #shader pixel
@@ -35,12 +49,17 @@ varying vec4 normal;
 varying vec4 color;
 varying vec2 texCoord;
 
+varying vec3 refractionDir;
+varying vec3 reflectionDir;
+varying float fresnel;
+
 #define outColor gl_FragColor
 #define texture texture2D
 
 #define DEBUG 0
 
 uniform sampler2D diffuseTexture;
+uniform samplerCube environmentMap;
 
 const float MIN_DIFFUSE_AMOUNT = 0.1; // ambient light
 const float DIFFUSE_AMOUNT = 1.0; // diffuse light multiplier
@@ -69,12 +88,25 @@ vec3 ComputeDiffuseColor(const in vec3 normal, const in vec3 lightDir, const in 
   return texDiffuseColor * max(dot(lightDir, normal), MIN_DIFFUSE_AMOUNT);
 }
 
+const float envFactor = 0.85;
+
 void main()
 {
   vec3 position = position.xyz;
   vec4 diffuseColor = texture(diffuseTexture, texCoord);
 
-  vec3 normal = normalize(normal.xyz);
+  vec3 reflectDir   = normalize(reflectionDir);
+  vec3 reflectColor = textureCube(environmentMap, reflectDir).xyz;
+  vec3 refractDir   = normalize(refractionDir);
+  vec3 refractColor = textureCube(environmentMap, refractDir).xyz;
+
+  vec3 resultColor  = mix(refractColor, reflectColor, fresnel);
+
+//  vec3 normal = normalize(refractDir.xyz);
+
+
+  gl_FragColor = vec4(resultColor, 1.0);
+  /*vec3 normal = normalize(normal.xyz);
   vec3 eyeDirection = normalize(worldViewPosition - position);
   
   vec3 color = vec3(0.0);
@@ -122,5 +154,5 @@ void main()
     }
   }
   
-  outColor = vec4(color, 1.0);
+  outColor = vec4(color, 1.0);*/
 }

@@ -123,7 +123,8 @@ void PassGroup::add_mesh(
   const math::mat4f& model_tm,
   size_t first_primitive,
   size_t primitives_count,
-  const PropertyMap& properties)
+  const PropertyMap& properties,
+  const TextureList& textures)
 {
   for (size_t i=0, max_count = mesh.primitives_count(); i < primitives_count; i++)
   {
@@ -152,7 +153,7 @@ void PassGroup::add_mesh(
     Pass pass = entry->pass;
     int priority = entry->priority;
 
-    pass.add_primitive(primitive, model_tm, properties);
+    pass.add_primitive(primitive, model_tm, properties, textures);
   }
 }
 

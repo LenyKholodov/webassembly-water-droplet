@@ -93,11 +93,13 @@ struct PassPrimitive: public Primitive
 {
   math::mat4f model_tm;
   PropertyMap properties;
+  TextureList textures;
 
-  PassPrimitive(const Primitive& primitive, const math::mat4f& tm, const PropertyMap& properties)
+  PassPrimitive(const Primitive& primitive, const math::mat4f& tm, const PropertyMap& properties, const TextureList& textures)
     : Primitive(primitive)
     , model_tm(tm)
     , properties(properties)
+    , textures(textures)
   {
 
   }
@@ -207,7 +209,7 @@ struct Pass::Impl
       //setup bindings
 
     BindingContext material_bindings(&parent_bindings, primitive.material);
-    BindingContext bindings(&material_bindings, primitive.properties);
+    BindingContext bindings(&material_bindings, primitive.properties, primitive.textures);
 
     math::mat4f mvp = view_projection_tm * primitive.model_tm;
 
@@ -608,20 +610,26 @@ PropertyMap& Pass::default_primitive_properties()
   return instance;
 }
 
-void Pass::add_primitive(const Primitive& primitive, const math::mat4f& model_tm, const PropertyMap& properties)
+TextureList& Pass::default_primitive_textures()
 {
-  impl->primitives.push_back(PassPrimitive(primitive, model_tm, properties));
+  static TextureList instance;
+  return instance;
+}
+
+void Pass::add_primitive(const Primitive& primitive, const math::mat4f& model_tm, const PropertyMap& properties, const TextureList& textures)
+{
+  impl->primitives.push_back(PassPrimitive(primitive, model_tm, properties, textures));
 }
 
 /// Add mesh to a pass
-void Pass::add_mesh(const Mesh& mesh, const math::mat4f& model_tm, size_t first_primitive, size_t primitives_count, const PropertyMap& properties)
+void Pass::add_mesh(const Mesh& mesh, const math::mat4f& model_tm, size_t first_primitive, size_t primitives_count, const PropertyMap& properties, const TextureList& textures)
 {
   for (size_t i=0, max_count = mesh.primitives_count(); i < primitives_count; i++)
   {
     if (first_primitive + i >= max_count)
       break;
 
-    add_primitive(mesh.primitive(i + first_primitive), model_tm, properties);
+    add_primitive(mesh.primitive(i + first_primitive), model_tm, properties, textures);
   }
 }
 

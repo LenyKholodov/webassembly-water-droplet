@@ -106,6 +106,7 @@ struct EnvironmentMap
   low_level::Texture portal_texture;
   low_level::RenderBuffer depth_render_buffer;
   std::vector<std::shared_ptr<Portal>> portals;
+  low_level::TextureList textures;
 
   EnvironmentMap(
     engine::render::low_level::Device& device,
@@ -119,6 +120,13 @@ struct EnvironmentMap
     {
       portals.push_back(std::make_shared<Portal>(device, portal_texture, i, depth_render_buffer));
     }
+
+    textures.insert("environmentMap", portal_texture);
+  }
+
+  static EnvironmentMap* find(engine::scene::Entity& entity)
+  {
+    return entity.find_user_data<EnvironmentMap>();
   }
 
   static EnvironmentMap* get(engine::scene::Entity& entity, ScenePassContext& context, size_t texture_size)

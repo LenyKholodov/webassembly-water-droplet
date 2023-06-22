@@ -114,6 +114,7 @@ class MirrorsPrerenderPass : IScenePass
 
         y = normalize(cross(z, x));
         
+        //subview_tm[0] = desc.right_hand ? math::vec4f(x, 0.0f) : math::vec4f(-x, 0.0f);
         subview_tm[0] = desc.right_hand ? math::vec4f(x, 0.0f) : math::vec4f(-x, 0.0f);
         subview_tm[1] = math::vec4f(y, 0.0f);
         subview_tm[2] = math::vec4f(z, 0.0f);
@@ -123,7 +124,8 @@ class MirrorsPrerenderPass : IScenePass
         SceneViewport scene_viewport(portal->frame_buffer);
         //SceneViewport scene_viewport = context.renderer().create_window_viewport();;
 
-        scene_viewport.set_clear_color(desc.color);
+        //scene_viewport.set_clear_color(desc.color);
+        scene_viewport.set_clear_color(math::vec4f(0, 0, 0, 1));
         scene_viewport.set_view_node(entity, proj_tm, subview_tm);
 
           //nested render

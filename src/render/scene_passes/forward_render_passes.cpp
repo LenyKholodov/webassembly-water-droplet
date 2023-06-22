@@ -16,7 +16,7 @@ namespace passes {
 
 static const char* FORWARD_LIGHTING_PROGRAM_FILE = "media/shaders/forward_lighting.glsl";
 //static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
-static const char* FRESNEL_PROGRAM_FILE = "media/shaders/forward_lighting.glsl";
+static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
 
 ///
 /// Forward lighting pass
@@ -123,9 +123,14 @@ struct ForwardLightingPass : IScenePass
 
       RenderableMesh* renderable_mesh = RenderableMesh::get(mesh.mesh(), context);
 
+        //check for envmap
+
+      EnvironmentMap* envmap = EnvironmentMap::find(mesh);
+
         //add mesh to pass
 
-      pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count());
+      pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count(), Pass::default_primitive_properties(),
+        envmap ? envmap->textures : Pass::default_primitive_textures());
     }
 
     void setup_point_lights(const PointLightArray& lights, ScenePassContext& context)

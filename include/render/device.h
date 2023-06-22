@@ -634,11 +634,15 @@ class Pass
     /// Default primitive properties
     static common::PropertyMap& default_primitive_properties();
 
+    /// Default primitive textures
+    static TextureList& default_primitive_textures();
+
     /// Add primitive to a pass
     void add_primitive(
       const Primitive& primitive,
       const math::mat4f& model_tm = math::mat4f(1.0f),
-      const common::PropertyMap& properties = default_primitive_properties());
+      const common::PropertyMap& properties = default_primitive_properties(),
+      const TextureList& textures = default_primitive_textures());
 
     /// Add mesh to a pass
     void add_mesh(
@@ -646,7 +650,8 @@ class Pass
       const math::mat4f& model_tm = math::mat4f(1.0f),
       size_t first_primitive=0,
       size_t primitives_count=(size_t)-1,
-      const common::PropertyMap& properties = default_primitive_properties());
+      const common::PropertyMap& properties = default_primitive_properties(),
+      const TextureList& textures = default_primitive_textures());
 
     /// Remove all primitives from the pass
     /// will be automaticall called after the Pass::render
@@ -709,7 +714,8 @@ class PassGroup
       const math::mat4f& model_tm = math::mat4f(1.0f),
       size_t first_primitive=0,
       size_t primitives_count=(size_t)-1,
-      const common::PropertyMap& properties = Pass::default_primitive_properties());
+      const common::PropertyMap& properties = Pass::default_primitive_properties(),
+      const TextureList& textures = Pass::default_primitive_textures());
 
   private:
     struct Impl;
