@@ -69,9 +69,9 @@ int main(void)
       //application setup
 
     PerspectiveCamera::Pointer camera = PerspectiveCamera::create();
-    math::vec3f camera_position(0.f, 10.f, -10.f);
-    math::anglef camera_pitch(math::degree(30.f));
-    math::anglef camera_yaw(math::degree(0.f));
+    math::vec3f camera_position(9.f, 6.5f, 1.f);
+    math::anglef camera_pitch(math::degree(25.f));
+    math::anglef camera_yaw(math::degree(-90.f));
     math::anglef camera_roll(math::degree(0.f));
     math::vec3f camera_move_direction(0.f);
     SoundPlayer sound_player;
@@ -140,62 +140,25 @@ int main(void)
 
     lights_parent->bind_to_parent(*scene_root);
 
-    std::vector<scene::PointLight::Pointer> point_lights;
-    std::vector<math::vec3f> point_lights_center_positions;
-
-    point_lights.reserve(LIGHTS_COUNT);
-    point_lights_center_positions.reserve(LIGHTS_COUNT);
-
-    for (size_t i = 0, count = LIGHTS_COUNT; i < count; i++)
-    {
-      scene::PointLight::Pointer light = scene::PointLight::create();
-
-      point_lights_center_positions.push_back(math::vec3f(LIGHTS_POSITION_RADIUS * cos(math::constf::pi * 2.f * i / count), 0.f, LIGHTS_POSITION_RADIUS * sin(math::constf::pi * 2.f * i / count)));
-
-      light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
-      light->set_attenuation(LIGHTS_ATTENUATION);
-      light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
-      light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
-
-      light->bind_to_parent(*lights_parent);
-
-      point_lights.emplace_back(light);
-    }
-
     scene::SpotLight::Pointer spot_light = scene::SpotLight::create();
 
     spot_light->set_attenuation(LIGHTS_ATTENUATION);
     spot_light->set_range(100.f);
-    spot_light->set_angle(math::degree(30.f));
+    spot_light->set_angle(math::degree(60.f));
+    spot_light->set_intensity(1.5f);
     spot_light->set_exponent(0.8f);
-    spot_light->set_position(math::vec3f(-10.f, 10.f, 0.f));
-    spot_light->bind_to_parent(*lights_parent);
-    spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
+    //spot_light->set_position(math::vec3f(-10.f, 10.f, 0.f));
+    spot_light->set_position(math::vec3f(0.f, 1.f, 0.f));
+    //spot_light->bind_to_parent(*lights_parent);
+    spot_light->bind_to_parent(*camera);
+    spot_light->set_orientation(to_quat(math::rotate(math::degree(15.f), math::vec3f(0.f, 0.f, 1.f))));
+    //spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
 
     media::geometry::Mesh spot_light_helper_mesh = media::geometry::MeshFactory::create_box("mtl1", 0.5f, 0.5f, 0.5f);
     scene::Mesh::Pointer spot_light_helper = scene::Mesh::create();
 
     spot_light_helper->set_mesh(spot_light_helper_mesh);
     spot_light_helper->bind_to_parent(*spot_light);
-
-      //projectile
-
-    scene::PerspectiveProjectile::Pointer projectile = scene::PerspectiveProjectile::create();
-
-    projectile->set_image("media/textures/projectile.png");
-    projectile->set_z_near(1.f);
-    projectile->set_z_far(100.f);
-    projectile->set_fov_x(math::degree(FOV_X));
-    projectile->set_fov_y(math::degree(FOV_X / window_ratio));
-    projectile->set_position(math::vec3f(10.f, 30.f, 0.f));
-    projectile->bind_to_parent(*scene_root);
-    projectile->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
-
-    media::geometry::Mesh projectile_helper_mesh = media::geometry::MeshFactory::create_sphere("mtl1", .15f);
-    scene::Mesh::Pointer projectile_helper = scene::Mesh::create();
-
-    projectile_helper->set_mesh(projectile_helper_mesh);
-    projectile_helper->bind_to_parent(*projectile);
 
       //render setup
 
@@ -237,7 +200,7 @@ int main(void)
 
       //create world
 
-    World world(scene_root, scene_renderer);
+    World world(scene_root, scene_renderer, camera);
 
       //scene viewport setup
 
@@ -381,23 +344,10 @@ int main(void)
 
       float time = Application::time();
 
-      for (size_t i=0; i<point_lights.size(); i++)
-      {
-        auto& light = point_lights[i];
-        float factor = math::constf::pi * 2.f * i / point_lights.size();
 
-        math::vec3f dpos = to_quat(math::degree(factor + time * 100 * factor), math::vec3f(0, 1, 0)) * math::vec3f(10, 0, 0);
-        math::vec3f pos = point_lights_center_positions[i] + dpos;
+      //spot_light->set_intensity((1.0f + cos(time * 2)) / 2.0f * 10.0f + 0.25f);
 
-        light->set_position(pos);
-      }
-
-      spot_light->set_intensity((1.0f + cos(time * 2)) / 2.0f * 10.0f + 0.25f);
-
-      spot_light->set_position(math::vec3f(cos(time * 0.5) * 10, 10.f, sin(time * 0.5) * 10));
-
-      projectile->set_position(math::vec3f(sin(time * 0.3) * 10, 5.f, cos(time * 0.6) * 8));
-      projectile->set_intensity((1.0f + cos(time)) / 2.0f * 10.0f + 0.25f);
+      //spot_light->set_position(math::vec3f(cos(time * 0.5) * 10, 10.f, sin(time * 0.5) * 10));
 
         //render scene
 
@@ -406,6 +356,9 @@ int main(void)
         //image presenting
 
       window.swap_buffers();
+
+      //engine_log_debug("campos=(%.2f, %.2f, %.2f)",
+      //                 camera->position().x, camera->position().y, camera->position().z);
 
         //wait for next frame
 

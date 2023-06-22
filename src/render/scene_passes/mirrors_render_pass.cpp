@@ -5,7 +5,7 @@ using namespace engine::render::low_level;
 using namespace engine::scene;
 using namespace engine::common;
 
-static constexpr float ENV_MAP_Z_NEAR = 0.01f;
+static constexpr float ENV_MAP_Z_NEAR = 0.001f;
 static constexpr float ENV_MAP_Z_FAR = 100.0f;
 
 namespace engine {
@@ -130,7 +130,10 @@ class MirrorsPrerenderPass : IScenePass
         subview_tm[1] = math::vec4f(y, 0.0f);
         subview_tm[2] = math::vec4f(z, 0.0f);
         subview_tm[3] = math::vec4f(0.0f, 0.0f, 0.0f, 1.0f);
-        //subview_tm    = inverse(subview_tm);
+        subview_tm    = inverse(subview_tm);
+        subview_tm    = math::translate(entity->environment_map_local_point()) * subview_tm;
+
+            //create viewport
 
         SceneViewport scene_viewport(portal->frame_buffer);
         //SceneViewport scene_viewport = context.renderer().create_window_viewport();;

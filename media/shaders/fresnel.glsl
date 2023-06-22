@@ -21,8 +21,9 @@ varying vec3 refractionDir;
 varying vec3 reflectionDir;
 varying float fresnel;
 
-const float eta = 0.2;
-//const float eta = 0.75;
+//const float eta = 0.2;
+const float eta = 0.75;
+//const float eta = 0.05;
 const float fresnelPower = 5.0;
 const float F = 0.05;
 
@@ -37,9 +38,10 @@ void main()
   testTexCoord = vPosition;
 
   vec3 inVec = -eyeDirection.xyz;
-  reflectionDir = reflect(inVec, normal.xyz);
-  refractionDir = refract(inVec, normal.xyz, eta);
-  fresnel = clamp(F + (1.0 - F) * pow(1.0 + dot(inVec, normalize(normal.xyz)), fresnelPower), 0.0, 1.0);
+  vec3 N = normal.xyz;
+  reflectionDir = reflect(inVec, N);
+  refractionDir = refract(inVec, N, eta);
+  fresnel = clamp(F + (1.0 - F) * pow(1.0 + dot(inVec, normalize(N)), fresnelPower), 0.0, 1.0);
 }
 
 #shader pixel
@@ -104,6 +106,9 @@ void main()
   vec3 refractColor = textureCube(environmentMap, refractDir).xyz;
 
   vec3 resultColor  = mix(refractColor, reflectColor, fresnel);
+  //vec3 resultColor  = reflectColor;
+  //vec3 resultColor  = refractColor;
+  //vec3 resultColor = normal.xyz;
 
 //  vec3 normal = normalize(refractDir.xyz);
 

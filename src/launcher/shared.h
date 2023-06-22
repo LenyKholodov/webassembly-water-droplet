@@ -13,7 +13,7 @@ class World
 {
   public:
     /// Constructor
-    World(engine::scene::Node::Pointer root_node, engine::render::scene::SceneRenderer& scene_render);
+    World(engine::scene::Node::Pointer root_node, engine::render::scene::SceneRenderer& scene_render, const engine::scene::Camera::Pointer& camera);
 
     /// Destructor
     ~World();

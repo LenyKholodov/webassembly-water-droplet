@@ -16,7 +16,13 @@ class Entity: public Node
     bool is_environment_map_required() const;
 
     /// Set environment maps requirement
-    void set_environment_map_required(bool state);    
+    void set_environment_map_required(bool state);
+
+    /// Environment map rendering local point
+    const math::vec3f& environment_map_local_point() const;
+
+    /// Set environment map rendering local point
+    void set_environment_map_local_point(const math::vec3f& point);
 
   protected:
     /// Constructor

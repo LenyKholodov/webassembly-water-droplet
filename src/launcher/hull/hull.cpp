@@ -87,6 +87,10 @@ bool HullBuilder::build_hull(const char* material_name)
 {
   engine_check_null(material_name);
 
+    //remove far points
+
+  
+
     //convex hull building
 
   btConvexHullShape source_shape (&impl->input_vertices[0], impl->input_vertices.size () / 3, 3 * sizeof (float));
@@ -138,6 +142,7 @@ bool HullBuilder::build_hull(const char* material_name)
     static const float PI = 3.1415926f;
     vertex.tex_coord = math::vec2f(asin(vertex.normal.x)/PI + 0.5f, asin(vertex.normal.y)/PI + 0.5f);
     vertex.color = math::vec4f(1.0f, 1.0f, 1.0f, 1.0f);
+    vertex.normal = normalize(vertex.position - center); //???
   }
 
     //update mesh

@@ -237,7 +237,8 @@ void Node::look_to(const math::vec3f& target_point, const math::vec3f& up)
   
   math::quatf rotation = -normalize(to_quat(view));  
 
-  set_orientation(rotation * impl->orientation);
+  //set_orientation(rotation * impl->orientation);
+  set_orientation(rotation);
 }
 
 void Node::world_look_to(const math::vec3f& target_point, const math::vec3f& up)
