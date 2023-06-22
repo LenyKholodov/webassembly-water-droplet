@@ -5,8 +5,8 @@ using namespace engine::render::low_level;
 using namespace engine::scene;
 using namespace engine::common;
 
-static constexpr float ENV_MAP_Z_NEAR = 0.1f;
-static constexpr float ENV_MAP_Z_FAR = 1000.0f;
+static constexpr float ENV_MAP_Z_NEAR = 0.01f;
+static constexpr float ENV_MAP_Z_FAR = 100.0f;
 
 namespace engine {
 namespace render {
@@ -81,7 +81,7 @@ class MirrorsPrerenderPass : IScenePass
 
       static constexpr size_t CUBEMAP_FACES_COUNT = 6;
 
-      static RenderDesc envmap_descs[CUBEMAP_FACES_COUNT] = {
+      /*static RenderDesc envmap_descs[CUBEMAP_FACES_COUNT] = {
         {math::vec4f(1, 0, 0, 1), math::vec3f(1, 0, 0),  math::vec3f(0, -1, 0), false},
         {math::vec4f(1, 1, 0, 1), math::vec3f(-1, 0, 0), math::vec3f(0, -1, 0), true},
 
@@ -90,6 +90,18 @@ class MirrorsPrerenderPass : IScenePass
 
         {math::vec4f(0, 0, 1, 1), math::vec3f(0, 0, 1),  math::vec3f(0, -1, 0), false},
         {math::vec4f(0, 0, 0, 1), math::vec3f(0, 0, -1), math::vec3f(0, -1, 0), false},
+      };*/
+
+
+      static RenderDesc envmap_descs[CUBEMAP_FACES_COUNT] = {
+        {math::vec4f(1, 0, 0, 1), math::vec3f(1, 0, 0),  math::vec3f(0, 1, 0), false},
+        {math::vec4f(1, 1, 0, 1), math::vec3f(-1, 0, 0), math::vec3f(0, -1, 0), true},
+
+        {math::vec4f(0, 1, 0, 1), math::vec3f(0, 1, 0),  math::vec3f(0, 0, 1), true},
+        {math::vec4f(0, 1, 1, 1), math::vec3f(0, -1, 0), math::vec3f(0, 0, 1), false},
+
+        {math::vec4f(0, 0, 1, 1), math::vec3f(0, 0, 1),  math::vec3f(0, 1, 0), false},
+        {math::vec4f(0, 0, 0, 1), math::vec3f(0, 0, -1), math::vec3f(0, 1, 0), false},
       };
 
       size_t map_index = 0;
@@ -108,18 +120,17 @@ class MirrorsPrerenderPass : IScenePass
         math::mat4f proj_tm = compute_perspective_proj_tm(fov, fov, ENV_MAP_Z_NEAR, ENV_MAP_Z_FAR);
         math::mat4f subview_tm;
 
-        math::vec3f z = normalize(-desc.dir), 
+        math::vec3f z = normalize(desc.dir), 
                     y = desc.up, 
-                    x = normalize(cross(y, z));
+                    x = normalize(desc.right_hand ? cross(y, z) : cross(z, y));
 
         y = normalize(cross(z, x));
         
-        //subview_tm[0] = desc.right_hand ? math::vec4f(x, 0.0f) : math::vec4f(-x, 0.0f);
-        subview_tm[0] = desc.right_hand ? math::vec4f(x, 0.0f) : math::vec4f(-x, 0.0f);
+        subview_tm[0] = math::vec4f(x, 0.0f);
         subview_tm[1] = math::vec4f(y, 0.0f);
         subview_tm[2] = math::vec4f(z, 0.0f);
         subview_tm[3] = math::vec4f(0.0f, 0.0f, 0.0f, 1.0f);
-        subview_tm    = inverse(subview_tm);
+        //subview_tm    = inverse(subview_tm);
 
         SceneViewport scene_viewport(portal->frame_buffer);
         //SceneViewport scene_viewport = context.renderer().create_window_viewport();;
@@ -127,6 +138,8 @@ class MirrorsPrerenderPass : IScenePass
         //scene_viewport.set_clear_color(desc.color);
         scene_viewport.set_clear_color(math::vec4f(0, 0, 0, 1));
         scene_viewport.set_view_node(entity, proj_tm, subview_tm);
+
+        scene_viewport.set_viewport(Viewport(0, 0, MIRROR_TEXTURE_SIZE, MIRROR_TEXTURE_SIZE));
 
           //nested render
 

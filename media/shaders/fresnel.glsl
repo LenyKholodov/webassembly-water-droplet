@@ -15,6 +15,7 @@ varying vec4 eyeDirection;
 varying vec4 normal;
 varying vec4 color;
 varying vec2 texCoord;
+varying vec3 testTexCoord;
 
 varying vec3 refractionDir;
 varying vec3 reflectionDir;
@@ -33,6 +34,7 @@ void main()
   normal = modelMatrix * vec4 (vNormal, 0.0);
   color = vColor;
   texCoord = vTexCoord;
+  testTexCoord = vPosition;
 
   vec3 inVec = -eyeDirection.xyz;
   reflectionDir = reflect(inVec, normal.xyz);
@@ -48,6 +50,7 @@ varying vec4 eyeDirection;
 varying vec4 normal;
 varying vec4 color;
 varying vec2 texCoord;
+varying vec3 testTexCoord;
 
 varying vec3 refractionDir;
 varying vec3 reflectionDir;
@@ -104,7 +107,9 @@ void main()
 
 //  vec3 normal = normalize(refractDir.xyz);
 
-
+  //gl_FragColor = vec4(textureCube(environmentMap, normalize(testTexCoord.xyz)).xyz, 1.0);
+  //gl_FragColor = vec4(normalize(testTexCoord.xyz), 1.0);
+  //gl_FragColor = vec4(normalize(normal.xyz), 1.0);
   gl_FragColor = vec4(resultColor, 1.0);
   /*vec3 normal = normalize(normal.xyz);
   vec3 eyeDirection = normalize(worldViewPosition - position);

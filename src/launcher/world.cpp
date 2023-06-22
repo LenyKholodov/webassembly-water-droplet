@@ -19,6 +19,7 @@ using namespace engine;
 const char* LEAF_MESH = "media/meshes/leaf.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.05f;
 const float DROPLET_PARTICLE_MASS = 0.01f;
+const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 100.0f;
 const float DROPLET_GENERATION_RADIUS = DROPLET_PARTICLE_RADIUS * 10.0f;
 const size_t DROPLET_GENERATION_PARTICLES_COUNT = 30;
 const math::vec3f LEAVES_SCALE(0.2f);
@@ -228,7 +229,7 @@ struct World::Impl
 
     //for test only
 
-    generate_droplet(math::vec3f(0, 10.0f, 6));
+    generate_droplet(math::vec3f(-3, 7.5f, 6));
   }
 
   void setup_ground()
@@ -407,7 +408,7 @@ struct World::Impl
   void generate_droplet(const math::vec3f& droplet_center)
   {
     static size_t PARALLELS_COUNT = 3, MERIDIANS_COUNT = 3, LAYERS_COUNT = 3;
-    static float DROPLET_RADIUS = LAYERS_COUNT * DROPLET_PARTICLE_RADIUS * 2.0f;
+    static float DROPLET_RADIUS = LAYERS_COUNT * DROPLET_PARTICLE_RADIUS * 3.0f;
 
     for (size_t i=0; i<LAYERS_COUNT; i++)
     {
@@ -439,8 +440,8 @@ struct World::Impl
   {
     scene::Mesh::Pointer mesh = scene::Mesh::create();
 
-    mesh->set_mesh(droplet_debug_particle_mesh);
-    //mesh->bind_to_parent(*scene_root);
+    //mesh->set_mesh(droplet_debug_particle_mesh);
+    mesh->bind_to_parent(*scene_root);
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, dynamics_world));
 
@@ -498,8 +499,6 @@ struct World::Impl
       {
         float distance = length(droplet->center - position);
 
-        static const float DROPLET_RADIUS = 2.f;
-
         if (distance < DROPLET_RADIUS)
         {
           droplet->points.push_back(position);
@@ -522,6 +521,7 @@ struct World::Impl
         droplet->hull_mesh->set_environment_map_required(true); //require envmap prerendering
 
         droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
+//        droplet->hull_mesh->set_mesh(media::geometry::MeshFactory::create_box(DROPLET_HULL_MATERIAL, 1, 1, 1));
         droplet->hull_mesh->bind_to_parent(*scene_root);
 
         droplets.push_back(droplet);
@@ -551,7 +551,10 @@ struct World::Impl
       
       droplet->center = center / droplet->points.size();
 
-      //engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
+            ///TODO test only!!!!!
+
+  //      droplet->hull_mesh->set_position(droplet->center);
+  //    engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
     }
 
     //remove empty droplets
@@ -576,7 +579,7 @@ struct World::Impl
         math::vec3f position(bt_position.getX(), bt_position.getY(), bt_position.getZ());
         math::vec3f velocity(particle->body->getLinearVelocity().getX(), particle->body->getLinearVelocity().getY(), particle->body->getLinearVelocity().getZ());
 
-        static const float TIME_STEP = 0.01f;
+        /*static const float TIME_STEP = 0.01f;
         static const float DROPLET_RADIUS = 1.5f;
         static const float DROPLET_FORCE = 0.003f;
         static const float EPSILON = 0.001f;
@@ -588,7 +591,16 @@ struct World::Impl
         {
           force = normalize(force) * (DROPLET_RADIUS - distance) / DROPLET_RADIUS * DROPLET_FORCE;
           particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-        }
+        }*/
+
+        static const float TIME_STEP = 0.1f;
+        static const float DROPLET_FORCE = 0.03f;
+
+        math::vec3f dir = droplet->center - position;
+        //math::vec3f force = position * DROPLET_FORCE / particle->body->getInvMass() / TIME_STEP;
+        math::vec3f force = dir * DROPLET_FORCE / TIME_STEP / particle->body->getInvMass();
+
+        particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
       }
     }
 
