@@ -340,10 +340,10 @@ int main(void)
     s.canvasResolutionScaleMode = EMSCRIPTEN_FULLSCREEN_CANVAS_SCALE_HIDEF;
     s.filteringMode = EMSCRIPTEN_FULLSCREEN_FILTERING_DEFAULT;
     s.canvasResizedCallback = 0;
-    EMSCRIPTEN_RESULT ret = emscripten_enter_soft_fullscreen("canvas", &s);
+/*    EMSCRIPTEN_RESULT ret = emscripten_enter_soft_fullscreen("canvas", &s);
 
     if (ret != EMSCRIPTEN_RESULT_SUCCESS)
-      engine_log_error("emscripten_enter_soft_fullscreen failed with code %d", ret);
+      engine_log_error("emscripten_enter_soft_fullscreen failed with code %d", ret); */
 #endif
 
       //main loop
