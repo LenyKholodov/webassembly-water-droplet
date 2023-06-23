@@ -14,7 +14,7 @@ const char* MUSIC_PATH = "sounds/music.mp3";
 const char* SOUND_DROPLET_GROUND_PATH = "sounds/177156__abstudios__water-drop.wav";
 const char* SOUND_DROPLET_LEAF_PATH = "sounds/267221__gkillhour__water-droplet.wav";
 
-const float MUSIC_VOLUME = 1f;
+const float MUSIC_VOLUME = 1.f;
 
 }
 
