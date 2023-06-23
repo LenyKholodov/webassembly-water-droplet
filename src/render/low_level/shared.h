@@ -32,6 +32,10 @@ extern "C"
 
 //#define CHECK_GL_ERRORS
 
+#ifdef CHECK_GL_ERRORS
+#warning "GL errors checking enabled"
+#endif
+
 namespace engine {
 namespace render {
 namespace low_level {

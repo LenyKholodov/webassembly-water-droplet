@@ -90,6 +90,12 @@ const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
 
+const float WATER_SURFACE_SIZE = GROUND_SIZE * 5;
+const float WATER_SURFACE_OFFSET = GROUND_OFFSET - 0.1;
+const size_t WATER_SURFACE_GRID_SIZE = 128;
+const char* WATER_SURFACE_MATERIAL_NAME = DROPLET_HULL_MATERIAL;
+
+
 //todo: remove motion states from rigid bodies
 
 namespace
@@ -287,6 +293,136 @@ struct PairHasher
   size_t operator()(const std::pair<int, int>& v) const { return size_t(v.first * v.second); }
 };
 
+struct Field
+{
+  float U[WATER_SURFACE_GRID_SIZE][WATER_SURFACE_GRID_SIZE];
+
+  Field()
+  {
+    memset(U, 0, sizeof(U));
+  }  
+};
+
+//see http://www.gamedev.ru/code/articles/?id=4205 for details
+struct WaterSurface
+{
+  Field A;
+  Field B;
+  Field* p;
+  Field* n;
+  media::geometry::Mesh mesh;
+  scene::Mesh::Pointer mesh_node;
+
+  WaterSurface()
+  {
+    p = &A;
+    n = &B;
+
+    const size_t INDICES_GRID_SIZE = WATER_SURFACE_GRID_SIZE - 1;
+
+    mesh.vertices_resize(WATER_SURFACE_GRID_SIZE * WATER_SURFACE_GRID_SIZE);
+    mesh.indices_resize(INDICES_GRID_SIZE * INDICES_GRID_SIZE * 6);
+
+    Vertex* v = mesh.vertices_data();
+
+    for (size_t i=0; i<WATER_SURFACE_GRID_SIZE; i++)
+    {
+      for (size_t j=0; j<WATER_SURFACE_GRID_SIZE; j++, v++)
+      {
+			  v->position  = math::vec3f(1.0f - 2.0f * i / float(WATER_SURFACE_GRID_SIZE), 0, 1.0f - 2.0f * j / float(WATER_SURFACE_GRID_SIZE));
+			  v->normal    = math::vec3f(0, 4.0f / float(WATER_SURFACE_GRID_SIZE), 0);
+        v->color     = math::vec4f(1.0f);
+        v->tex_coord = math::vec2f(j / float(WATER_SURFACE_GRID_SIZE), i / float(WATER_SURFACE_GRID_SIZE));
+      }
+    }
+
+    media::geometry::Mesh::index_type* ind = mesh.indices_data();
+
+    for (size_t i=0; i<INDICES_GRID_SIZE; i++)
+    {
+      int row_vertex_offset = i * WATER_SURFACE_GRID_SIZE;
+
+      for (size_t j=0; j<INDICES_GRID_SIZE; j++, ind += 6)
+      {
+        ind[0] = row_vertex_offset + j;
+        ind[1] = row_vertex_offset + j + 1;
+        ind[2] = row_vertex_offset + j + WATER_SURFACE_GRID_SIZE;
+        ind[3] = row_vertex_offset + j + 1;
+        ind[4] = row_vertex_offset + j + WATER_SURFACE_GRID_SIZE + 1;
+        ind[5] = row_vertex_offset + j + WATER_SURFACE_GRID_SIZE;
+      }
+    }
+
+    mesh.add_primitive(WATER_SURFACE_MATERIAL_NAME, media::geometry::PrimitiveType_TriangleList, 0, mesh.indices_count() / 3, 0);
+
+    mesh_node = scene::Mesh::create();
+
+    mesh_node->set_mesh(mesh);
+    mesh_node->set_environment_map_required(true);
+    mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
+    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 1, WATER_SURFACE_SIZE));
+  }
+
+  void update()
+  {
+      //add noise
+
+    int i1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
+    int j1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
+
+    if (rand() % 100 ==0)
+    {
+      for(int i=-3; i<4; i++)
+      {
+        for(int j=-3; j<4; j++)
+        {
+          float v=6.0f-i*i-j*j;
+
+          if(v<0.0f)
+            v=0.0f;
+
+          n->U[i+i1+3][j+j1+3] -= v*0.004f;
+        }
+      }
+    }
+
+      //laplass pass
+
+    Vertex* v = mesh.vertices_data();
+
+    for (size_t i=1; i<WATER_SURFACE_GRID_SIZE-1; i++)
+    {
+      for (size_t j=1; j<WATER_SURFACE_GRID_SIZE-1; j++, v++)
+      {
+        v->position.y = n->U[i][j];
+        v->normal.x   = n->U[i-1][j]-n->U[i+1][j];
+        //v->normal.y   = 4.0f / float(WATER_SURFACE_GRID_SIZE);
+        v->normal.y   = 10.0f / float(WATER_SURFACE_GRID_SIZE);
+        v->normal.z   = n->U[i][j-1]-n->U[i][j+1];
+        v->normal     = normalize(v->normal);
+
+        //constexpr float VIS = 0.005f;
+        constexpr float VIS = 0.005f;
+
+        float laplas=(n->U[i-1][j]+
+                    n->U[i+1][j]+
+                n->U[i][j+1]+
+                n->U[i][j-1])*0.25f-n->U[i][j];
+
+        p->U[i][j] = ((2.0f-VIS) * n->U[i][j] - p->U[i][j] * (1.0f-VIS) + laplas);
+      }
+    }
+
+      //swap fields
+
+    std::swap(p, n);
+
+      //invalidate mesh
+
+    mesh.touch();
+  }
+};
+
 }
 
 struct World::Impl: RigidBodyWorldCommonData
@@ -322,6 +458,7 @@ struct World::Impl: RigidBodyWorldCommonData
   RigidBodyInfo ground_rigid_body_info;
   std::unordered_map<std::pair<int, int>, std::shared_ptr<PlantLight>, PairHasher> plant_lights;
   size_t fallen_droplet_particles_count = 0;
+  WaterSurface water_surface;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -450,6 +587,10 @@ struct World::Impl: RigidBodyWorldCommonData
     phys_bodies.push_back(std::make_shared<PhysBodySync>(ground_shape, 0.f, math::vec3f(0.0f), math::vec3f(0, GROUND_OFFSET, 0), math::quatf(), floor, COLLISION_GROUP_GROUND, COLLISION_MASK_GROUND, dynamics_world));
 
     phys_bodies.back()->body->setUserPointer(&ground_rigid_body_info);
+
+      //configure water surface
+
+    water_surface.mesh_node->bind_to_parent(*scene_root);
   }
 
   void add_stem(const math::vec3f& position, const math::quatf& rotation)
@@ -1195,6 +1336,9 @@ struct World::Impl: RigidBodyWorldCommonData
       }
     }
 
+      //update water surface
+
+    water_surface.update();
   }
 
   /// Input control

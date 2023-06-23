@@ -86,6 +86,10 @@ DeviceContextImpl::DeviceContextImpl(const Window& window, const DeviceOptions& 
 {
   engine_log_info("Initializing OpenGL context...");
 
+#ifdef CHECK_GL_ERRORS
+  engine_log_warning("GL error checking is enabled!!!");
+#endif 
+
   make_current();
 
   engine_log_info("...loading OpenGL functions");

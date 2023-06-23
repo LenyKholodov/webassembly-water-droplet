@@ -127,6 +127,6 @@ void SoundPlayer::update()
   {
     engine_log_debug("Restarting music");
     impl->music_playing = false;
-    play_music(true);
+    //play_music(true);
   }
 }

@@ -95,6 +95,7 @@ vec3 ComputeDiffuseColor(const in vec3 normal, const in vec3 lightDir, const in 
 }
 
 const float envFactor = 0.85;
+//const float envFactor = 0.15;
 
 void main()
 {
@@ -156,4 +157,5 @@ void main()
   }
   
   outColor = vec4(mix(color, resultColor, envFactor), 1.0);
+  //outColor = vec4(normalize(normal), 1.0);
 }
