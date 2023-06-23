@@ -12,6 +12,7 @@
 
 #include <list>
 #include <ctime>
+#include <random>
 
 using namespace engine::common;
 using namespace engine::render::scene;
@@ -33,7 +34,10 @@ const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
 const float DROPLET_PARTICLE_FORCE = 0.0002f;
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
-const float DROPLET_PARTICLE_FRICTION = 0.8;
+const float DROPLET_PARTICLE_MIN_FRICTION = 0.8;
+const float DROPLET_PARTICLE_MAX_FRICTION = 2;
+const float DROPLET_MIN_FRICTION_FACTOR = 0.2f;
+const float DROPLET_MAX_FRICTION_FACTOR = 2.;
 const size_t DROPLET_INITIAL_LEAF = 0;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
@@ -43,14 +47,13 @@ const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 30;
 const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f;
-const size_t MIN_DROPLET_PARTICLES_FOR_PLANT_COUNT = 25;
 static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 1;
 const size_t MAX_PARTICLES_COUNT = 90;
 const math::vec3f LEAVES_SCALE(0.1f);
-const math::vec3f PLANT_SCALE(0.01f);
+const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
-const float LEAF_MIN_FRICTION = DROPLET_PARTICLE_FRICTION;
-const float LEAF_MAX_FRICTION = DROPLET_PARTICLE_FRICTION * 1.5f;
+const float LEAF_MIN_FRICTION = DROPLET_PARTICLE_MIN_FRICTION;
+const float LEAF_MAX_FRICTION = DROPLET_PARTICLE_MIN_FRICTION * 1.5f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
 const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC;
@@ -69,8 +72,8 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
-const float LIGHTS_MIN_INTENSITY = 0.5f;
-const float LIGHTS_MAX_INTENSITY = 0.8;
+const float LIGHTS_MIN_INTENSITY = 0.7f;
+const float LIGHTS_MAX_INTENSITY = 0.9;
 const float LIGHTS_MIN_RANGE = 2.5;
 const float LIGHTS_MAX_RANGE = 3.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
@@ -78,8 +81,13 @@ const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
 const float PLANT_GENERATION_HEIGHT = GROUND_OFFSET;
 const float PLANT_GENERATION_RADIUS = 10.f;
 const float PLANT_SAFE_ZONE_RADIUS = 1.5f;
-const float PLANT_LIGHT_ZONE_SIZE = 5.f;
-const float PLANT_LIGHT_RANGE_FACTOR = 3;
+const float PLANT_LIGHT_ZONE_SIZE = 15.f;
+const float PLANT_LIGHT_RANGE_FACTOR = PLANT_LIGHT_ZONE_SIZE / LIGHTS_MAX_RANGE;
+const float PLANT_LIGHT_HEIGHT = GROUND_OFFSET + 2.f;
+const float PLANT_MAX_SCALE = 3.0f;
+const float PLANT_SCALE_STEP = 2.0;
+const float PLANT_GROW_CHANCE = 0.25f;
+const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
 
 //todo: remove motion states from rigid bodies
 
@@ -109,6 +117,11 @@ struct RigidBodyInfo
     {}
 };
 
+struct DropletParticle
+{
+  bool fallen = false;
+};
+
 struct PhysBodySync
 {
   std::shared_ptr<btDiscreteDynamicsWorld> dynamics_world;
@@ -116,6 +129,7 @@ struct PhysBodySync
   std::shared_ptr<btDefaultMotionState> motion_state;
   std::shared_ptr<btRigidBody> body;
   scene::Mesh::Pointer mesh;
+  std::shared_ptr<DropletParticle> droplet_particle;
 
   PhysBodySync(
     const std::shared_ptr<btCollisionShape>& shape,
@@ -174,6 +188,7 @@ struct Plant
 {
   scene::Mesh::Pointer mesh;
   scene::PointLight::Pointer point_light;
+  float scale = 1.0f;
 };
 
 struct PlantLight
@@ -191,7 +206,6 @@ struct Droplet
   scene::Mesh::Pointer hull_mesh;
   scene::PointLight::Pointer point_light;
   size_t remove_counter = 0;
-  bool plant_generated = false;
 };
 
 void find_nearest_point(
@@ -292,7 +306,8 @@ struct World::Impl
   clock_t last_debug_dump_time = 0;
   RigidBodyInfo droplet_rigid_body_info;
   RigidBodyInfo ground_rigid_body_info;
-  std::unordered_map<std::pair<int, int>, PlantLight, PairHasher> plant_lights;
+  std::unordered_map<std::pair<int, int>, std::shared_ptr<PlantLight>, PairHasher> plant_lights;
+  size_t fallen_droplet_particles_count = 0;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -633,7 +648,7 @@ struct World::Impl
 
   void generate_droplet(const math::vec3f& droplet_center)
   {
-    //static float DROPLET_RADIUS = LAYERS_COUNT * DROPLET_PARTICLE_RADIUS * 3.0f;
+    float friction_factor = crand(DROPLET_MIN_FRICTION_FACTOR, DROPLET_MAX_FRICTION_FACTOR);
 
     for (size_t i=0; i<LAYERS_COUNT; i++)
     {
@@ -657,13 +672,13 @@ struct World::Impl
 
           math::vec3f position(cos(angle2) * radius, y, sin(angle2) * radius);
 
-          generate_droplet_particle(position + droplet_center);
+          generate_droplet_particle(position + droplet_center, friction_factor);
         }
       }
     }
   }
 
-  void generate_droplet_particle(const math::vec3f& offset)
+  void generate_droplet_particle(const math::vec3f& offset, float friction_factor)
   {
     scene::Mesh::Pointer mesh = scene::Mesh::create();
 
@@ -677,15 +692,41 @@ struct World::Impl
     PhysBodySync& particle = *phys_bodies.back();
 
     particle.body->setUserPointer(&droplet_rigid_body_info);
-    particle.body->setFriction(DROPLET_PARTICLE_FRICTION);
-    particle.body->setSleepingThresholds(DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD, DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD);
+    particle.body->setFriction(crand(DROPLET_PARTICLE_MIN_FRICTION, DROPLET_PARTICLE_MAX_FRICTION) * friction_factor);
+    //particle.body->setSleepingThresholds(DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD, DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD);
     //particle.body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
+
+    particle.droplet_particle = std::make_shared<DropletParticle>();
 
     droplet_particles.push_back(phys_bodies.back());
   }
 
   void generate_plant()
   {
+      //try to grow existing plant
+
+    if (frand() < PLANT_GROW_CHANCE)
+    {  
+      std::random_device rd;
+      std::mt19937 g(rd());
+
+      std::shuffle(plants.begin(), plants.end(), g);
+
+      for (auto& plant : plants)
+      {
+        if (plant->scale >= PLANT_MAX_SCALE)
+          continue;
+
+        plant->scale *= PLANT_SCALE_STEP;
+
+        plant->mesh->set_scale(math::vec3f(plant->scale));
+
+        return;
+      }
+    }
+
+      //generate new plant
+    
     math::vec3f position(crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS, PLANT_GENERATION_HEIGHT, crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS);
 
     generate_plant(position);
@@ -709,6 +750,8 @@ struct World::Impl
     plant->point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
 
     //plant->point_light->bind_to_parent(*plant->mesh);
+
+    plants.push_back(plant);
   }
 
   void update()
@@ -759,6 +802,19 @@ struct World::Impl
     }
 
       //remove fallen droplets
+
+    for (std::shared_ptr<PhysBodySync>& particle : droplet_particles)
+    {
+      if (particle->body->getWorldTransform().getOrigin().getY() >= MIN_DROPLET_PARTICLE_HEIGHT)
+        continue;
+
+      if (particle->droplet_particle->fallen)
+        continue;
+
+      particle->droplet_particle->fallen = true;
+
+      fallen_droplet_particles_count++;
+    }
 
     droplet_particles.erase(std::remove_if(droplet_particles.begin(), droplet_particles.end(), [](const std::shared_ptr<PhysBodySync>& particle) {
       return particle->body->getWorldTransform().getOrigin().getY() < MIN_DROPLET_PARTICLE_HEIGHT;
@@ -985,19 +1041,11 @@ struct World::Impl
 
       //generate plants
 
-    for (std::shared_ptr<Droplet>& droplet : droplets)
+    if (fallen_droplet_particles_count > PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD)
     {
-      if (droplet->center.y > DROPLET_PLANT_GENERATION_HEIGHT || droplet->plant_generated)
-        continue;
-
-      if (droplet->bodies.size() < MIN_DROPLET_PARTICLES_FOR_PLANT_COUNT)
-        continue;
-
       generate_plant();
-
-      droplet->plant_generated = true;
-
       media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_ground);
+      fallen_droplet_particles_count = 0;
     }
 
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),
@@ -1090,9 +1138,32 @@ struct World::Impl
     {
       math::vec3f plant_center = plant->mesh->position();
       std::pair<int, int> light_zone(plant_center.x / PLANT_LIGHT_ZONE_SIZE, plant_center.z / PLANT_LIGHT_ZONE_SIZE);
+      std::shared_ptr<PlantLight> plant_light;
+      auto it = plant_lights.find(light_zone);
 
-      
+      if (it != plant_lights.end())
+      {
+        plant_light = it->second;
+      }
+      else
+      {
+        plant_light = std::make_shared<PlantLight>();
 
+        plant_light->point_light = scene::PointLight::create();
+
+        plant_light->point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
+        plant_light->point_light->set_attenuation(LIGHTS_ATTENUATION);
+        plant_light->point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
+        //plant_light->point_light->set_range(PLANT_LIGHT_RANGE_FACTOR * crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
+        plant_light->point_light->set_range(PLANT_LIGHT_RANGE_FACTOR * crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
+
+        engine_log_debug("Point light for zone %d,%d created\n", light_zone.first, light_zone.second);
+
+        plant_light->point_light->set_position(math::vec3f(light_zone.first * PLANT_LIGHT_ZONE_SIZE, PLANT_LIGHT_HEIGHT, light_zone.second * PLANT_LIGHT_ZONE_SIZE));
+        plant_light->point_light->bind_to_parent(*scene_root);
+
+        plant_lights[light_zone] = plant_light;
+      }
     }
   }
 
