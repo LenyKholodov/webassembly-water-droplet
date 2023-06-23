@@ -108,6 +108,9 @@ Model MeshFactory::load_obj_model(const char* file_name)
     for (size_t i=0; i<mesh->group_count; i++)
     {
       fastObjGroup& group = mesh->groups[i];
+
+      engine_log_debug("Parsing objgroup '%s' of model '%s'", group.name, file_name);
+
       unsigned int* face_material = mesh->face_materials + group.face_offset;
       unsigned int index_offset = group.index_offset;
       unsigned int current_material = (unsigned int)-1;

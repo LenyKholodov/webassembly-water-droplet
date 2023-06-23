@@ -20,10 +20,12 @@ using namespace engine::scene;
 using namespace engine;
 
 const char* LEAF_MESH = "media/meshes/leaf.obj";
+const char* PLANT_MESH = "media/meshes/fern.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.05f;
 const float DROPLET_PARTICLE_MASS = 0.001f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 15.0f;
 const bool DROPLET_DEBUG_DRAW = false;
+const size_t DROPLET_INITIAL_LEAF = 7;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 5;
@@ -31,9 +33,12 @@ const size_t DROPLET_GENERATION_INTERVAL = 10 * CLOCKS_PER_SEC;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 200;
+const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f;
+const size_t MIN_DROPLET_PARTICLES_FOR_PLANT_COUNT = 25;
 static size_t PARALLELS_COUNT = 6, MERIDIANS_COUNT = 6, LAYERS_COUNT = 1;
 const size_t MAX_PARTICLES_COUNT = 90;
 const math::vec3f LEAVES_SCALE(0.1f);
+const math::vec3f PLANT_SCALE(0.01f);
 const float LEAF_MASS = 1.0f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
@@ -52,13 +57,18 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const float COLLISION_MARGIN = 0.001f;
-const float FRICTION = 0.4;
+const float FRICTION = 0.7;
 
-const float LIGHTS_MIN_INTENSITY = 0.35f;
+const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
+const float LIGHTS_MIN_INTENSITY = 0.5f;
 const float LIGHTS_MAX_INTENSITY = 0.9;
 const float LIGHTS_MIN_RANGE = 3.5;
 const float LIGHTS_MAX_RANGE = 4.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 0.75, 0.25);
+
+const float PLANT_GENERATION_HEIGHT = GROUND_OFFSET;
+const float PLANT_GENERATION_RADIUS = 10.f;
+const float PLANT_SAFE_ZONE_RADIUS = 1.5f;
 
 //todo: remove motion states from rigid bodies
 
@@ -125,6 +135,12 @@ struct Leaf
   scene::PointLight::Pointer point_light;
 };
 
+struct Plant
+{
+  scene::Mesh::Pointer mesh;
+  scene::PointLight::Pointer point_light;
+};
+
 struct Droplet
 {
   math::vec3f center;
@@ -134,6 +150,7 @@ struct Droplet
   HullBuilder hull_builder;
   scene::Mesh::Pointer hull_mesh;
   size_t remove_counter = 0;
+  bool plant_generated = false;
 };
 
 void find_nearest_point(
@@ -170,6 +187,7 @@ void find_nearest_point(
 struct World::Impl
 {
   media::geometry::Model leaf_model;
+  media::geometry::Model plant_model;
   scene::Node::Pointer scene_root;
   scene::Camera::Pointer camera;
   std::shared_ptr<btDefaultCollisionConfiguration> collision_configuration;
@@ -189,6 +207,7 @@ struct World::Impl
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
+  std::vector<std::shared_ptr<Plant>> plants;
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
@@ -197,6 +216,7 @@ struct World::Impl
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
+    , plant_model(media::geometry::MeshFactory::load_obj_model(PLANT_MESH))
     , scene_root(scene_root)
     , camera(camera)
     , collision_configuration(new btDefaultCollisionConfiguration())
@@ -212,10 +232,62 @@ struct World::Impl
     Device render_device = scene_renderer.device();
     MaterialList materials = scene_renderer.materials();
 
-    for (size_t i=0, count=leaf_model.mesh.primitives_count(); i<count; i++)
+    load_materials(leaf_model, materials, render_device);
+    load_materials(plant_model, materials, render_device);
+
+      //configure droplet material
+
+    droplet_material.set_shader_tags("fresnel");
+    droplet_material.set_textures(materials.find("mtl1")->textures());
+    droplet_material.set_properties(materials.find("mtl1")->properties());
+
+      //create ground
+
+    materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
+
+      //scale meshes
+
+    scale_model(leaf_model, LEAVES_SCALE);
+    scale_model(plant_model, PLANT_SCALE);
+
+      //create leaves
+
+     //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
+    add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+     //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+
+      //configure physics
+
+    dynamics_world->setGravity(btVector3(0, -10, 0));
+
+    droplet_particle_shape.reset(new btSphereShape(btScalar(DROPLET_PARTICLE_RADIUS)));
+    static_bind_shape.reset(new btSphereShape(btScalar(0.01f)));
+
+    btVector3 bt_local_inertia(0, 0, 0);
+    droplet_particle_shape->calculateLocalInertia(DROPLET_PARTICLE_MASS, bt_local_inertia);
+    droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
+
+    //droplet_particle_shape->setMargin(COLLISION_MARGIN);
+
+    setup_ground();
+  }
+
+  void scale_model(media::geometry::Model& model, const math::vec3f& scale)
+  {
+    media::geometry::Vertex* vertex = model.mesh.vertices_data();
+
+    for (size_t i=0, count=model.mesh.vertices_count(); i<count; i++, vertex++)
     {
-      const media::geometry::Primitive& primitive = leaf_model.mesh.primitive(i);
-      media::geometry::Material* asset_material = leaf_model.materials.find(primitive.material.c_str());
+      vertex->position *= scale;
+    }
+  }
+
+  void load_materials(const media::geometry::Model& model, MaterialList& materials, Device& render_device)
+  {
+    for (size_t i=0, count=model.mesh.primitives_count(); i<count; i++)
+    {
+      const media::geometry::Primitive& primitive = model.mesh.primitive(i);
+      media::geometry::Material* asset_material = model.materials.find(primitive.material.c_str());
 
       if (materials.find(primitive.material.c_str()))
         continue;
@@ -238,46 +310,6 @@ struct World::Impl
 
       materials.insert(primitive.material.c_str(), render_material);
     }
-
-      //configure droplet material
-
-    droplet_material.set_shader_tags("fresnel");
-    droplet_material.set_textures(materials.find("mtl1")->textures());
-    droplet_material.set_properties(materials.find("mtl1")->properties());
-
-      //create ground
-
-    materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
-
-      //scale mesh
-
-    media::geometry::Vertex* vertex = leaf_model.mesh.vertices_data();
-
-    for (size_t i=0, count=leaf_model.mesh.vertices_count(); i<count; i++, vertex++)
-    {
-      vertex->position *= LEAVES_SCALE;
-    }
-
-      //create leaves
-
-     //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
-    add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
-     //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
-
-      //configure physics
-
-    dynamics_world->setGravity(btVector3(0, -10, 0));
-
-    droplet_particle_shape.reset(new btSphereShape(btScalar(DROPLET_PARTICLE_RADIUS)));
-    static_bind_shape.reset(new btSphereShape(btScalar(0.01f)));
-
-    btVector3 bt_local_inertia(0, 0, 0);
-    droplet_particle_shape->calculateLocalInertia(DROPLET_PARTICLE_MASS, bt_local_inertia);
-    droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
-
-    //droplet_particle_shape->setMargin(COLLISION_MARGIN);
-
-    setup_ground();
   }
 
   void setup_ground()
@@ -446,7 +478,7 @@ struct World::Impl
         leaf.point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
 
         //leaf.point_light->bind_to_parent(*leaf.phys_body->mesh);
-        leaf.point_light->set_position(initial_center);
+        leaf.point_light->set_position(initial_center + LEAF_LIGHT_OFFSET);
         leaf.point_light->bind_to_parent(*scene_root);
 
           //configure leaf constraint
@@ -500,7 +532,7 @@ struct World::Impl
     last_droplet_generated_time = clock();
 
     //size_t leaf_index = rand() % leaves.size();
-    size_t leaf_index = 9 % leaves.size();
+    size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
 
     Leaf& leaf = leaves[leaf_index];
 
@@ -557,6 +589,33 @@ struct World::Impl
     //particle.body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
 
     droplet_particles.push_back(phys_bodies.back());
+  }
+
+  void generate_plant()
+  {
+    math::vec3f position(crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS, PLANT_GENERATION_HEIGHT, crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS);
+
+    generate_plant(position);
+  }
+
+  void generate_plant(const math::vec3f& position)
+  {
+    std::shared_ptr<Plant> plant = std::make_shared<Plant>();
+
+    plant->mesh = scene::Mesh::create();
+
+    plant->mesh->set_position(position);
+    plant->mesh->set_mesh(plant_model.mesh);
+    plant->mesh->bind_to_parent(*scene_root);
+
+    plant->point_light = scene::PointLight::create();
+
+    plant->point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
+    plant->point_light->set_attenuation(LIGHTS_ATTENUATION);
+    plant->point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
+    plant->point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
+
+    plant->point_light->bind_to_parent(*plant->mesh);
   }
 
   void update()
@@ -772,6 +831,21 @@ struct World::Impl
       }
     }
 
+      //generate plants
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      if (droplet->center.y > DROPLET_PLANT_GENERATION_HEIGHT || droplet->plant_generated)
+        continue;
+
+      if (droplet->bodies.size() < MIN_DROPLET_PARTICLES_FOR_PLANT_COUNT)
+        continue;
+
+      generate_plant();
+
+      droplet->plant_generated = true;
+    }
+
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),
       droplets.end());
 
@@ -795,8 +869,8 @@ struct World::Impl
 
         static const float FORCE_DISTANCE = DROPLET_RADIUS * 2.0f;
 
-        static const float DROPLET_FORCE = 0.0001f;
-        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 3.0f;
+        static const float DROPLET_FORCE = 0.00005f;
+        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 4.0f;
         static const float TIME_STEP = 1.0f / 60.0f;
 
         math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);

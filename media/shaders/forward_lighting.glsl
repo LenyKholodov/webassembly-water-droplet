@@ -153,6 +153,9 @@ void main()
   vec3 position = position.xyz;
   vec4 diffuseColor = texture(diffuseTexture, texCoord);
 
+  if (diffuseColor.a < 0.01)
+    discard;
+
   vec3 normalizedEyeDirection = normalize(eyeDirection.xyz);
 
   mat3 tbn = CotangentFrame(normalize(normal.xyz), normalizedEyeDirection, texCoord);
