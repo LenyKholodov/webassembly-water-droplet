@@ -271,7 +271,7 @@ bool contact_added_callback (btManifoldPoint& contact_point,
     if (body0_info->world_data) body0_info->world_data->leaves_collisions_count++;
     if (body1_info->world_data) body1_info->world_data->leaves_collisions_count++;
 
-    engine_log_debug("leaf collisions %d", body0_info->world_data->leaves_collisions_count);
+    //engine_log_debug("leaf collisions %d", body0_info->world_data->leaves_collisions_count);
 
 //    engine_log_info("New contact added with group %d at position %f %f %f", not_droplet_body_info->collision_group, contact_point.getPositionWorldOnA().getX(), contact_point.getPositionWorldOnA().getY(), contact_point.getPositionWorldOnA().getZ());
     //media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);

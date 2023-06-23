@@ -25,6 +25,9 @@ class SoundPlayer
     /// Play sound
     static void play_sound(SoundId sound_id, float volume = 1.f);
 
+    /// Update
+    void update();
+
   private:
     struct Impl;
     std::shared_ptr<Impl> impl;

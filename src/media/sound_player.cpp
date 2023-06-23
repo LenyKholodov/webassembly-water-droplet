@@ -1,4 +1,5 @@
 #include <common/exception.h>
+#include <common/log.h>
 #include <media/sound_player.h>
 
 #ifdef EMSCRIPTEN
@@ -15,6 +16,7 @@ const char* SOUND_DROPLET_GROUND_PATH = "sounds/177156__abstudios__water-drop.wa
 const char* SOUND_DROPLET_LEAF_PATH = "sounds/267221__gkillhour__water-droplet.wav";
 
 const float MUSIC_VOLUME = 1.f;
+const clock_t MUSIC_PLAY_TIME = 200 * CLOCKS_PER_SEC; //dirty hack, I know)
 
 }
 
@@ -22,6 +24,7 @@ const float MUSIC_VOLUME = 1.f;
 struct SoundPlayer::Impl
 {
   bool music_playing = false;
+  clock_t music_start_play_time = 0;
 
   Impl()
   {
@@ -79,6 +82,7 @@ struct SoundPlayer::Impl
     play_sound(MUSIC_PATH, MUSIC_VOLUME, true);
 
     music_playing = true;
+    music_start_play_time = clock();
   }
 
   static void play_sound(SoundId sound_id, float volume)
@@ -113,4 +117,16 @@ void SoundPlayer::play_music(bool force) const
 void SoundPlayer::play_sound(SoundId sound_id, float volume)
 {
   Impl::play_sound(sound_id, volume);
+}
+
+void SoundPlayer::update()
+{
+  //engine_log_debug("update sound %u; %d", clock() - impl->music_start_play_time, impl->music_playing);
+
+  if (impl->music_playing && clock() - impl->music_start_play_time > MUSIC_PLAY_TIME)
+  {
+    engine_log_debug("Restarting music");
+    impl->music_playing = false;
+    play_music(true);
+  }
 }

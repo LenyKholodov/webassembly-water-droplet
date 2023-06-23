@@ -398,6 +398,8 @@ int main(void)
       world.inputDrag(target_offset_x, target_offset_y, target_offset_z);
       world.update();
 
+      sound_player.update();
+
       if (!passes_initialized)
       {
         scene_renderer.add_pass("Forward Lighting");
