@@ -1,5 +1,6 @@
 #include <scene/node.h>
 #include <common/exception.h>
+#include <common/log.h>
 #include <math/utility.h>
 
 #include <unordered_map>
@@ -215,39 +216,26 @@ const math::vec3f& Node::scale() const
 
 void Node::look_to(const math::vec3f& target_point, const math::vec3f& up)
 {
-  math::vec3f x, y, z;
+  math::vec3f world_taget_point = world_tm() * target_point;
+  math::vec3f world_up = world_tm() * up;
 
-  z = normalize(target_point);
-  y = normalize(up);
-
-  static const float EPS = 0.001f;
-  
-  if (qlen(y) < EPS || qlen(z) < EPS || equal(y, z, EPS))
-    return;
-
-  math::mat3f view;
-
-  x = cross(y, z);
-  y = cross(z, x);
-
-  view[0] = x;
-  view[1] = y;
-  view[2] = z;
-  view    = transpose(view);  
-  
-  math::quatf rotation = -normalize(to_quat(view));  
-
-  //set_orientation(rotation * impl->orientation);
-  set_orientation(rotation);
+  world_look_to(world_taget_point, world_up);
 }
 
 void Node::world_look_to(const math::vec3f& target_point, const math::vec3f& up)
 {
-  math::mat4f inv_world_tm = inverse(world_tm());
-  math::vec3f local_target_point = inv_world_tm * target_point;
-  math::vec3f local_up = math::vec3f(inv_world_tm * math::vec4f(up, 0));
+  math::vec3f world_pos = this->world_tm() * math::vec3f(0.0f);
+  math::mat4f world_tm = math::lookat(-world_pos, -target_point, up); //TODO fix it
+  math::mat4f local_tm = parent() ? inverse(parent()->world_tm()) * world_tm : world_tm;
+  math::vec3f position;
+  math::quatf rotation;
+  math::vec3f scale;
 
-  look_to(local_target_point, local_up);
+  math::affine_decompose(local_tm, position, rotation, scale);
+
+  set_orientation(rotation);
+
+  math::vec3f test = target_point - world_tm * math::vec3f(0.0f);
 }
 
 const math::mat4f& Node::local_tm() const

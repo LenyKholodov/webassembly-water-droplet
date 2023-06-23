@@ -147,16 +147,17 @@ int main(void)
 
     scene::SpotLight::Pointer spot_light = scene::SpotLight::create();
 
-    spot_light->set_attenuation(LIGHTS_ATTENUATION);
-    spot_light->set_range(100.f);
+    //spot_light->set_attenuation(LIGHTS_ATTENUATION);
+    spot_light->set_range(30.f);
     spot_light->set_angle(math::degree(60.f));
-    spot_light->set_intensity(1.5f);
+    spot_light->set_intensity(100.5f);
     spot_light->set_exponent(0.8f);
-    //spot_light->set_position(math::vec3f(-10.f, 10.f, 0.f));
-    spot_light->set_position(math::vec3f(0.f, 1.f, 0.f));
-    //spot_light->bind_to_parent(*lights_parent);
-    spot_light->bind_to_parent(*camera);
-    spot_light->set_orientation(to_quat(math::rotate(math::degree(15.f), math::vec3f(0.f, 0.f, 1.f))));
+    //spot_light->set_position(math::vec3f(-20.f, 20.f, 0.f));
+    //spot_light->set_position(math::vec3f(0.f, 3.f, 0.f));
+    spot_light->bind_to_parent(*lights_parent);
+    //spot_light->bind_to_parent(*camera);
+    //spot_light->set_orientation(to_quat(math::rotate(math::degree(30.f), math::vec3f(1.f, 0.f, 0.f))));
+    //spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
     //spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
 
     media::geometry::Mesh spot_light_helper_mesh = media::geometry::MeshFactory::create_box("mtl1", 0.5f, 0.5f, 0.5f);
@@ -385,10 +386,13 @@ int main(void)
 
       float time = Application::time();
 
+      static const float SPOT_LIGHT_ROTATION_FREQUENCY = 0.1;
 
-      //spot_light->set_intensity((1.0f + cos(time * 2)) / 2.0f * 10.0f + 0.25f);
 
-      //spot_light->set_position(math::vec3f(cos(time * 0.5) * 10, 10.f, sin(time * 0.5) * 10));
+      spot_light->set_intensity((1.0f + cos(time * SPOT_LIGHT_ROTATION_FREQUENCY)) / 2.0f * 1.0f + 0.25f);
+
+      spot_light->set_position(math::vec3f(cos(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 10, 10.f, sin(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 10));
+      spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
 
         //render scene
 

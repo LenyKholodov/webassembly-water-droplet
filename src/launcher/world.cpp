@@ -27,7 +27,7 @@ const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 5;
-const size_t DROPLET_GENERATION_INTERVAL = 15 * CLOCKS_PER_SEC;
+const size_t DROPLET_GENERATION_INTERVAL = 10 * CLOCKS_PER_SEC;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 200;
@@ -35,7 +35,7 @@ static size_t PARALLELS_COUNT = 6, MERIDIANS_COUNT = 6, LAYERS_COUNT = 1;
 const size_t MAX_PARTICLES_COUNT = 90;
 const math::vec3f LEAVES_SCALE(0.1f);
 const float LEAF_MASS = 1.0f;
-const math::vec3f STEAM_POSITION(-3.0f, 0, 3.0f);
+const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
 
 const float GROUND_SIZE = 50.0f;
@@ -504,7 +504,7 @@ struct World::Impl
 
     Leaf& leaf = leaves[leaf_index];
 
-    generate_droplet(leaf.initial_center + math::vec3f(0, 1, 0));
+    generate_droplet(leaf.initial_center + math::vec3f(0, 0.5, 0));
   }
 
   void generate_droplet(const math::vec3f& droplet_center)
@@ -513,23 +513,25 @@ struct World::Impl
 
     for (size_t i=0; i<LAYERS_COUNT; i++)
     {
-      float radius = float(i+1) / LAYERS_COUNT * DROPLET_RADIUS / 2.0;
+      float radius = float(i+1) / LAYERS_COUNT * DROPLET_RADIUS / 8.0;
 
       for (size_t j=0; j<PARALLELS_COUNT; j++)
       {
-        float rel_y = float(j+1) / PARALLELS_COUNT;
+        static float PI2 = 3.1415926f * 2.0f;
+
+        float angle1 = float(j) / PARALLELS_COUNT * PI2;
+        float rel_y = cos(angle1);
+        //float rel_y = float(j+1) / PARALLELS_COUNT;
 
         rel_y = 2.0f * (rel_y - 0.5f);
 
-        float y = rel_y * DROPLET_RADIUS;
+        float y = rel_y * radius;
 
         for (size_t k=0; k<MERIDIANS_COUNT; k++)
         {
-          static float PI2 = 3.1415926f * 2.0f;
+          float angle2 = float(k) / MERIDIANS_COUNT * PI2;
 
-          float angle = float(k) / MERIDIANS_COUNT * PI2;
-
-          math::vec3f position(cos(angle) * radius, y, sin(angle) * radius);
+          math::vec3f position(cos(angle2) * radius, y, sin(angle2) * radius);
 
           generate_droplet_particle(position + droplet_center);
         }
@@ -583,7 +585,7 @@ struct World::Impl
       float inv_mass = body->getInvMass();
       float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
 
-      static const float TIME_STEP = 0.05f;
+      static const float TIME_STEP = 0.025f;
       static const float FORCE_FACTOR = 0.1f;
       static const float TORQUE_FACTOR = 0.01f;
 
