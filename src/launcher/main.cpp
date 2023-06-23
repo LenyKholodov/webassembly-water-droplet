@@ -61,6 +61,16 @@ float crand(float min=-1.0f, float max=1.0f)
 
 }
 
+#ifdef __EMSCRIPTEN__
+EM_JS(int, canvas_get_width, (), {
+  return canvas.clientWidth;
+});
+
+EM_JS(int, canvas_get_height, (), {
+  return canvas.clientHeight;
+});
+#endif
+
 int main(void)
 {
   try
@@ -82,7 +92,18 @@ int main(void)
     SoundPlayer sound_player;
 
     Application app;
-    Window window("Render test", 1280, 720);
+
+    int window_width = 1280;
+    int window_height = 720;
+
+#ifdef __EMSCRIPTEN__
+    window_width = canvas_get_width();
+    window_height = canvas_get_height();
+#endif
+
+    engine_log_info("Window size: %dx%d", window_width, window_height);
+
+    Window window("Render test", window_width, window_height);
 
     window.set_keyboard_handler([&](Key key, bool pressed) {
       sound_player.play_music();
@@ -333,19 +354,6 @@ int main(void)
       if (button == MouseButton_Right)
         right_mouse_button_pressed = pressed;
     });
-
-#ifdef __EMSCRIPTEN__
-    EmscriptenFullscreenStrategy s;
-    memset(&s, 0, sizeof(s));
-    s.scaleMode = EMSCRIPTEN_FULLSCREEN_SCALE_STRETCH;
-    s.canvasResolutionScaleMode = EMSCRIPTEN_FULLSCREEN_CANVAS_SCALE_HIDEF;
-    s.filteringMode = EMSCRIPTEN_FULLSCREEN_FILTERING_DEFAULT;
-    s.canvasResizedCallback = 0;
-/*    EMSCRIPTEN_RESULT ret = emscripten_enter_soft_fullscreen("canvas", &s);
-
-    if (ret != EMSCRIPTEN_RESULT_SUCCESS)
-      engine_log_error("emscripten_enter_soft_fullscreen failed with code %d", ret); */
-#endif
 
       //main loop
 
