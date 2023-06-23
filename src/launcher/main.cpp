@@ -263,11 +263,14 @@ int main(void)
     float target_offset_x, target_offset_y, target_offset_z;
     float start_grab_x, start_grab_y, start_grab_z;
 
+    int start_play_music = 0;
+
     window.set_mouse_move_handler([&](double x, double y) {
       //double relative_x = x / window.width();
       //double relative_y = y / window.height();
 
       //engine_log_info("mouse move pos=(%.1f, %.1f) <-> (%.2f, %.2f)", x, y, relative_x, relative_y);
+      start_play_music = 10;
 
       double dx = x - last_mouse_x;
       double dy = y - last_mouse_y;
@@ -326,6 +329,8 @@ int main(void)
       //engine_log_info("mouse button=%d pressed=%d", button, pressed);
       sound_player.play_music();
 
+      start_play_music = 10;
+
       if (button == MouseButton_Left)
       {
         left_mouse_button_pressed = pressed;
@@ -376,10 +381,19 @@ int main(void)
 
     double last_time = app.time();
 
+    bool force_music_play_started = false;
+
     app.main_loop([&]()
     {
       if (window.should_close())
         app.exit();
+
+      //hack for android, on android music won't play until some time is passed after first interaction
+      if (start_play_music && start_play_music-- == 1 && !force_music_play_started)
+      {
+        force_music_play_started = true;
+        sound_player.play_music(true);
+      }
 
       world.inputDrag(target_offset_x, target_offset_y, target_offset_z);
       world.update();

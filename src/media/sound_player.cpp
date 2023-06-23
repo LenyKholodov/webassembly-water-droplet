@@ -25,6 +25,17 @@ struct SoundPlayer::Impl
 
   Impl()
   {
+    EM_ASM({
+      var audio = new Audio();
+
+      if (!audio.canPlayType("audio/mpeg")) {
+        console.error("Can't play background music, format not supported");
+      }
+
+      if (!audio.canPlayType("audio/wav") && !audio.canPlayType("audio/x-wav")) {
+        console.error("Can't play sfx, format not supported");
+      }
+    });
   }
 
   ~Impl()
@@ -32,24 +43,40 @@ struct SoundPlayer::Impl
     //TODO stop sounds
   }
 
-  static void play_sound(const char* path, float volume)
+  static void play_sound(const char* path, float volume, bool is_music = false)
   {
     //this method is always called with constants paths, so no need to check for null path here
 
     EM_ASM({
+      if (Module.isMusicPlaying && $3)
+      {
+        return;
+      }
+
       var path = Module.UTF8ToString($0, $1);
       var audio = new Audio(path);
+
       audio.volume = $2;
-      audio.play();          
-    }, path, strlen(path), volume);
+
+      var promise = audio.play();
+      
+      if (promise !== undefined) {
+        promise.then(() => {
+          if ($3)
+          {
+            Module.isMusicPlaying = true;
+          }
+        }).catch(error => console.error);
+      }
+    }, path, strlen(path), volume, is_music);
   }
 
-  void play_music()
+  void play_music(bool force)
   {
-    if (music_playing)
+    if (music_playing && !force)
       return;
 
-    play_sound(MUSIC_PATH, MUSIC_VOLUME);
+    play_sound(MUSIC_PATH, MUSIC_VOLUME, true);
 
     music_playing = true;
   }
@@ -78,9 +105,9 @@ SoundPlayer::SoundPlayer()
   : impl(new Impl())
   {}
 
-void SoundPlayer::play_music() const
+void SoundPlayer::play_music(bool force) const
 {
-  impl->play_music();
+  impl->play_music(force);
 }
 
 void SoundPlayer::play_sound(SoundId sound_id, float volume)

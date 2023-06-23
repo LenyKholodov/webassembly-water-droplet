@@ -20,7 +20,7 @@ class SoundPlayer
     SoundPlayer();
 
     /// Play music
-    void play_music() const;
+    void play_music(bool force = false) const;
     
     /// Play sound
     static void play_sound(SoundId sound_id, float volume = 1.f);
