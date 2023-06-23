@@ -107,17 +107,8 @@ void main()
   vec3 refractColor = textureCube(environmentMap, refractDir).xyz;
 
   vec3 resultColor  = mix(refractColor, reflectColor, fresnel);
-  //vec3 resultColor  = reflectColor;
-  //vec3 resultColor  = refractColor;
-  //vec3 resultColor = normal.xyz;
 
-//  vec3 normal = normalize(refractDir.xyz);
-
-  //gl_FragColor = vec4(textureCube(environmentMap, normalize(testTexCoord.xyz)).xyz, 1.0);
-  //gl_FragColor = vec4(normalize(testTexCoord.xyz), 1.0);
-  //gl_FragColor = vec4(normalize(normal.xyz), 1.0);
-  gl_FragColor = vec4(resultColor, 1.0);
-  /*vec3 normal = normalize(normal.xyz);
+  vec3 normal = normalize(normal.xyz);
   vec3 eyeDirection = normalize(worldViewPosition - position);
   
   vec3 color = vec3(0.0);
@@ -153,7 +144,6 @@ void main()
 
     if (theta < lightAngle)
     {
-
       float distance = length(lightPosition - position);
       float attenuation = min(1.0, lightRange / (lightAttenuation.x + lightAttenuation.y * distance + lightAttenuation.z * (distance * distance))); 
 
@@ -165,5 +155,5 @@ void main()
     }
   }
   
-  outColor = vec4(color, 1.0);*/
+  outColor = vec4(mix(color, resultColor, envFactor), 1.0);
 }

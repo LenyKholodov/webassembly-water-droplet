@@ -168,7 +168,7 @@ struct FrameBuffer::Impl
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &frame_buffer_id);
 
-    engine_log_debug("FBO destroyed: %d", frame_buffer_id);
+    //engine_log_debug("FBO destroyed: %d", frame_buffer_id);
 
     frame_buffer_id = 0;
   }
@@ -190,7 +190,7 @@ struct FrameBuffer::Impl
 
     glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer_id);
 
-    engine_log_debug("FBO created: %d", frame_buffer_id);
+    //engine_log_debug("FBO created: %d", frame_buffer_id);
 
     try
     {
