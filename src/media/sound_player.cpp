@@ -10,7 +10,7 @@ using namespace engine::media::sound;
 namespace
 {
 
-const char* MUSIC_PATH = "sounds/Siddhartha Corsus - The Endless Knot.mp3";
+const char* MUSIC_PATH = "sounds/music.mp3";
 const char* SOUND_DROP_PATH = "sounds/177156__abstudios__water-drop.wav";
 
 }
