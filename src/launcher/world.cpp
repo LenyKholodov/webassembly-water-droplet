@@ -22,7 +22,7 @@ using namespace engine;
 const char* LEAF_MESH = "media/meshes/leaf.obj";
 const float DROPLET_PARTICLE_RADIUS = 0.05f;
 const float DROPLET_PARTICLE_MASS = 0.001f;
-const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
+const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 15.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
@@ -586,7 +586,7 @@ struct World::Impl
       float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
 
       static const float TIME_STEP = 0.025f;
-      static const float FORCE_FACTOR = 0.1f;
+      static const float FORCE_FACTOR = 0.05f;
       static const float TORQUE_FACTOR = 0.01f;
 
       btVector3 linear_velocity, angular_velocity;
@@ -724,7 +724,7 @@ struct World::Impl
 
       for (const math::vec3f& point : droplet->points)
       {
-        if (length(point - droplet->center) > length(sigma))
+        if (length(point - droplet->center) > length(sigma) * 0.85f)
           continue;
         droplet->hull_builder.add_point(point);
       }
@@ -795,8 +795,8 @@ struct World::Impl
 
         static const float FORCE_DISTANCE = DROPLET_RADIUS * 2.0f;
 
-        static const float DROPLET_FORCE = 0.0003f;
-        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 5.0f;
+        static const float DROPLET_FORCE = 0.0001f;
+        static const float EPSILON = DROPLET_PARTICLE_RADIUS * 3.0f;
         static const float TIME_STEP = 1.0f / 60.0f;
 
         math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);
