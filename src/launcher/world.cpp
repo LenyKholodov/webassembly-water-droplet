@@ -3,6 +3,7 @@
 #include <common/log.h>
 #include <common/named_dictionary.h>
 #include <math/utility.h>
+#include <media/sound_player.h>
 
 #include "btBulletDynamicsCommon.h"
 #include "BulletCollision/Gimpact/btGImpactShape.h"
@@ -42,6 +43,7 @@ const math::vec3f PLANT_SCALE(0.01f);
 const float LEAF_MASS = 1.0f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
+const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC;
 
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
@@ -85,6 +87,19 @@ float crand(float min=-1.0f, float max=1.0f)
   return frand() * (max - min) + min;
 }
 
+struct RigidBodyInfo
+{
+  int collision_group;                //collision group of this object
+  clock_t prev_droplet_contact_time;  //time when previous contact with droplet occured
+  const clock_t& last_frame_time;     //last frame time
+
+  RigidBodyInfo(int in_collision_group, const clock_t& in_last_frame_time)
+    : collision_group(in_collision_group)
+    , prev_droplet_contact_time(0)
+    , last_frame_time(in_last_frame_time)
+    {}
+};
+
 struct PhysBodySync
 {
   std::shared_ptr<btDiscreteDynamicsWorld> dynamics_world;
@@ -116,6 +131,12 @@ struct PhysBodySync
     btRigidBody::btRigidBodyConstructionInfo rb_info(mass, motion_state.get(), shape.get(), btVector3(local_intertia[0], local_intertia[1], local_intertia[2]));
     body = std::make_shared<btRigidBody>(rb_info);
 
+    if (collision_group == COLLISION_GROUP_DROPLET)
+    {
+      //we need callbacks for droplet collisions
+      body->setCollisionFlags (body->getCollisionFlags () | btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
+    }
+
     dynamics_world->addRigidBody(body.get(), collision_group, collision_mask);
   }
 
@@ -127,12 +148,17 @@ struct PhysBodySync
 
 struct Leaf
 {
+  std::shared_ptr<RigidBodyInfo> rigid_body_info;
   std::shared_ptr<PhysBodySync> phys_body;
   std::shared_ptr<btRigidBody> static_bind_body;
   std::shared_ptr<btTypedConstraint> constraint;
   btTransform target_transform;
   math::vec3f initial_center;
   scene::PointLight::Pointer point_light;
+
+  Leaf(const clock_t& last_frame_time)
+    : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time))
+    {}
 };
 
 struct Plant
@@ -182,6 +208,37 @@ void find_nearest_point(
   }
 }
 
+bool contact_added_callback (btManifoldPoint& contact_point,
+                             const btCollisionObjectWrapper* object0,
+                             int part_id0,
+                             int index0,
+                             const btCollisionObjectWrapper* object1,
+                             int part_id1,
+                             int index1)
+{
+  //We use only btRigidBody for collision objects, so safe to use static_cast here
+  RigidBodyInfo *body0_info = (RigidBodyInfo*)object0->m_collisionObject->getUserPointer (),
+                *body1_info = (RigidBodyInfo*)object1->m_collisionObject->getUserPointer ();
+
+  if (body0_info->collision_group != COLLISION_GROUP_LEAF && body1_info->collision_group != COLLISION_GROUP_LEAF)
+  {
+    //it is not collision with leaf, ignore
+    return false;
+  }
+
+  RigidBodyInfo *not_droplet_body_info = body0_info->collision_group == COLLISION_GROUP_DROPLET ? body1_info : body0_info; 
+  
+  if (not_droplet_body_info->last_frame_time - not_droplet_body_info->prev_droplet_contact_time > PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING)
+  {
+    engine_log_info("New contact added with group %d at position %f %f %f", not_droplet_body_info->collision_group, contact_point.getPositionWorldOnA().getX(), contact_point.getPositionWorldOnA().getY(), contact_point.getPositionWorldOnA().getZ());
+    media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
+  }
+
+  not_droplet_body_info->prev_droplet_contact_time = not_droplet_body_info->last_frame_time;
+
+  return false;
+}
+
 }
 
 struct World::Impl
@@ -198,7 +255,6 @@ struct World::Impl
   std::shared_ptr<btCollisionShape> ground_shape;
   std::shared_ptr<btCollisionShape> droplet_particle_shape;
   std::shared_ptr<btCollisionShape> static_bind_shape;
-  std::shared_ptr<btRigidBody> ground_body;
   std::vector<std::shared_ptr<PhysBodySync>> phys_bodies;
   media::geometry::Mesh droplet_debug_particle_mesh;
   math::vec3f droplet_particle_local_intertia;
@@ -211,8 +267,11 @@ struct World::Impl
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
+  clock_t last_frame_time = 0;
   clock_t last_droplet_generated_time = 0;
   clock_t last_debug_dump_time = 0;
+  RigidBodyInfo droplet_rigid_body_info;
+  RigidBodyInfo ground_rigid_body_info;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -226,6 +285,8 @@ struct World::Impl
     , dynamics_world(new btDiscreteDynamicsWorld(dispatcher.get(), broadphase.get(), solver.get(), collision_configuration.get()))
     , droplet_debug_particle_mesh(media::geometry::MeshFactory::create_sphere("mtl1", DROPLET_PARTICLE_RADIUS))
     , grabbed_object(0)
+    , droplet_rigid_body_info(COLLISION_GROUP_DROPLET, last_frame_time)
+    , ground_rigid_body_info(COLLISION_GROUP_GROUND, last_frame_time)
   {
       //load materials
 
@@ -270,6 +331,11 @@ struct World::Impl
     //droplet_particle_shape->setMargin(COLLISION_MARGIN);
 
     setup_ground();
+
+    if (!gContactAddedCallback)
+    {
+      gContactAddedCallback = contact_added_callback;
+    }
   }
 
   void scale_model(media::geometry::Model& model, const math::vec3f& scale)
@@ -331,6 +397,8 @@ struct World::Impl
     ground_transform.setOrigin(btVector3(0, GROUND_OFFSET, 0));
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(ground_shape, 0.f, math::vec3f(0.0f), math::vec3f(0, GROUND_OFFSET, 0), math::quatf(), floor, COLLISION_GROUP_GROUND, COLLISION_MASK_GROUND, dynamics_world));
+
+    phys_bodies.back()->body->setUserPointer(&ground_rigid_body_info);
   }
 
   void add_stem(const math::vec3f& position, const math::quatf& rotation)
@@ -466,7 +534,7 @@ struct World::Impl
         initial_center /= indices_count;
         initial_center  = rotation * initial_center + position;
 
-        Leaf leaf;
+        Leaf leaf(last_frame_time);
 
           //configure light
 
@@ -486,6 +554,8 @@ struct World::Impl
         leaf.phys_body = phys_bodies.back();
         leaf.target_transform = leaf.phys_body->body->getWorldTransform();
         leaf.initial_center = initial_center;
+
+        leaf.phys_body->body->setUserPointer(leaf.rigid_body_info.get());
 
         leaf.phys_body->body->setFriction(FRICTION);
 
@@ -526,10 +596,10 @@ struct World::Impl
     if (droplet_particles.size() > MAX_PARTICLES_COUNT)
       return;
 
-    if (last_droplet_generated_time && clock() - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
+    if (last_droplet_generated_time && last_frame_time - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
       return;
 
-    last_droplet_generated_time = clock();
+    last_droplet_generated_time = last_frame_time;
 
     //size_t leaf_index = rand() % leaves.size();
     size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
@@ -584,6 +654,7 @@ struct World::Impl
 
     PhysBodySync& particle = *phys_bodies.back();
 
+    particle.body->setUserPointer(&droplet_rigid_body_info);
     particle.body->setFriction(FRICTION);
     particle.body->setSleepingThresholds(DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD, DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD);
     //particle.body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
@@ -620,11 +691,13 @@ struct World::Impl
 
   void update()
   {
+    last_frame_time = clock();
+
       //debug dump
 
-    if (clock() - last_debug_dump_time > DEBUG_DUMP_INTERVAL)
+    if (last_frame_time - last_debug_dump_time > DEBUG_DUMP_INTERVAL)
     {
-      last_debug_dump_time = clock();
+      last_debug_dump_time = last_frame_time;
       engine_log_debug("Droplets count: %d (particles count %d)", droplets.size(), droplet_particles.size());
     }
 
@@ -844,6 +917,8 @@ struct World::Impl
       generate_plant();
 
       droplet->plant_generated = true;
+
+      media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_ground);
     }
 
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),

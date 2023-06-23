@@ -306,9 +306,6 @@ int main(void)
       //engine_log_info("mouse button=%d pressed=%d", button, pressed);
       sound_player.play_music();
 
-      if (pressed)
-        sound_player.play_sound(SoundId::drop);
-
       if (button == MouseButton_Left)
       {
         left_mouse_button_pressed = pressed;

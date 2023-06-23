@@ -11,7 +11,10 @@ namespace
 {
 
 const char* MUSIC_PATH = "sounds/music.mp3";
-const char* SOUND_DROP_PATH = "sounds/177156__abstudios__water-drop.wav";
+const char* SOUND_DROPLET_GROUND_PATH = "sounds/177156__abstudios__water-drop.wav";
+const char* SOUND_DROPLET_LEAF_PATH = "sounds/267221__gkillhour__water-droplet.wav";
+
+const float MUSIC_VOLUME = 1f;
 
 }
 
@@ -29,15 +32,16 @@ struct SoundPlayer::Impl
     //TODO stop sounds
   }
 
-  void play_sound(const char* path)
+  static void play_sound(const char* path, float volume)
   {
     //this method is always called with constants paths, so no need to check for null path here
 
     EM_ASM({
       var path = Module.UTF8ToString($0, $1);
       var audio = new Audio(path);
+      audio.volume = $2;
       audio.play();          
-    }, path, strlen(path));
+    }, path, strlen(path), volume);
   }
 
   void play_music()
@@ -45,25 +49,28 @@ struct SoundPlayer::Impl
     if (music_playing)
       return;
 
-    play_sound(MUSIC_PATH);
+    play_sound(MUSIC_PATH, MUSIC_VOLUME);
 
     music_playing = true;
   }
 
-  void play_sound(SoundId sound_id)
+  static void play_sound(SoundId sound_id, float volume)
   {
     const char* sound_path;
 
     switch(sound_id)
     {
-      case SoundId::drop:
-        sound_path = SOUND_DROP_PATH;
+      case SoundId::droplet_ground:
+        sound_path = SOUND_DROPLET_GROUND_PATH;
+        break;
+      case SoundId::droplet_leaf:
+        sound_path = SOUND_DROPLET_LEAF_PATH;
         break;
       default:
         throw engine::common::Exception::format("Unknown sound id: %d", static_cast<int>(sound_id));
     }
 
-    play_sound(sound_path);
+    play_sound(sound_path, volume);
   }
 };
 
@@ -76,7 +83,7 @@ void SoundPlayer::play_music() const
   impl->play_music();
 }
 
-void SoundPlayer::play_sound(SoundId sound_id) const
+void SoundPlayer::play_sound(SoundId sound_id, float volume)
 {
-  impl->play_sound(sound_id);
+  Impl::play_sound(sound_id, volume);
 }

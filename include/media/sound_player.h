@@ -8,7 +8,8 @@ namespace sound {
 
 enum class SoundId
 {
-  drop
+  droplet_ground,
+  droplet_leaf
 };
 
 /// Sound player
@@ -22,7 +23,7 @@ class SoundPlayer
     void play_music() const;
     
     /// Play sound
-    void play_sound(SoundId sound_id) const;
+    static void play_sound(SoundId sound_id, float volume = 1.f);
 
   private:
     struct Impl;
