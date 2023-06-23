@@ -56,7 +56,8 @@ const float LEAF_MIN_FRICTION = DROPLET_PARTICLE_MIN_FRICTION;
 const float LEAF_MAX_FRICTION = DROPLET_PARTICLE_MIN_FRICTION * 1.5f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
-const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC;
+const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC / 2;
+const size_t PLAY_CONTACT_SOUND_COLLISIONS_COUNT = 5;
 
 const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
@@ -104,16 +105,24 @@ float crand(float min=-1.0f, float max=1.0f)
   return frand() * (max - min) + min;
 }
 
+struct RigidBodyWorldCommonData
+{
+  size_t leaves_collisions_count = 0;
+  clock_t last_leaf_contact_sound_played_time = 0;
+};
+
 struct RigidBodyInfo
 {
   int collision_group;                //collision group of this object
   clock_t prev_droplet_contact_time;  //time when previous contact with droplet occured
   const clock_t& last_frame_time;     //last frame time
+  RigidBodyWorldCommonData* world_data; //common data for all rigid bodies in the world
 
-  RigidBodyInfo(int in_collision_group, const clock_t& in_last_frame_time)
+  RigidBodyInfo(int in_collision_group, const clock_t& in_last_frame_time, RigidBodyWorldCommonData& world_data)
     : collision_group(in_collision_group)
     , prev_droplet_contact_time(0)
     , last_frame_time(in_last_frame_time)
+    , world_data(&world_data)
     {}
 };
 
@@ -179,8 +188,8 @@ struct Leaf
   math::vec3f initial_center;
   scene::PointLight::Pointer point_light;
 
-  Leaf(const clock_t& last_frame_time)
-    : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time))
+  Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
+    : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time, world_data))
     {}
 };
 
@@ -259,8 +268,13 @@ bool contact_added_callback (btManifoldPoint& contact_point,
   
   if (not_droplet_body_info->last_frame_time - not_droplet_body_info->prev_droplet_contact_time > PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING)
   {
+    if (body0_info->world_data) body0_info->world_data->leaves_collisions_count++;
+    if (body1_info->world_data) body1_info->world_data->leaves_collisions_count++;
+
+    engine_log_debug("leaf collisions %d", body0_info->world_data->leaves_collisions_count);
+
 //    engine_log_info("New contact added with group %d at position %f %f %f", not_droplet_body_info->collision_group, contact_point.getPositionWorldOnA().getX(), contact_point.getPositionWorldOnA().getY(), contact_point.getPositionWorldOnA().getZ());
-    media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
+    //media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
   }
 
   not_droplet_body_info->prev_droplet_contact_time = not_droplet_body_info->last_frame_time;
@@ -275,7 +289,7 @@ struct PairHasher
 
 }
 
-struct World::Impl
+struct World::Impl: RigidBodyWorldCommonData
 {
   media::geometry::Model leaf_model;
   media::geometry::Model plant_model;
@@ -321,8 +335,8 @@ struct World::Impl
     , dynamics_world(new btDiscreteDynamicsWorld(dispatcher.get(), broadphase.get(), solver.get(), collision_configuration.get()))
     , droplet_debug_particle_mesh(media::geometry::MeshFactory::create_sphere("mtl1", DROPLET_PARTICLE_RADIUS))
     , grabbed_object(0)
-    , droplet_rigid_body_info(COLLISION_GROUP_DROPLET, last_frame_time)
-    , ground_rigid_body_info(COLLISION_GROUP_GROUND, last_frame_time)
+    , droplet_rigid_body_info(COLLISION_GROUP_DROPLET, last_frame_time, *this)
+    , ground_rigid_body_info(COLLISION_GROUP_GROUND, last_frame_time, *this)
   {
       //load materials
 
@@ -571,7 +585,7 @@ struct World::Impl
         initial_center /= indices_count;
         initial_center  = rotation * initial_center + position;
 
-        Leaf leaf(last_frame_time);
+        Leaf leaf(last_frame_time, *this);
 
           //configure light
 
@@ -1165,6 +1179,22 @@ struct World::Impl
         plant_lights[light_zone] = plant_light;
       }
     }
+
+      //play sound for interactions between droplets and leaves
+
+    if (clock() - last_leaf_contact_sound_played_time > PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING)
+    {
+      if (leaves_collisions_count >= PLAY_CONTACT_SOUND_COLLISIONS_COUNT)
+      {
+        media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
+
+        engine_log_debug("Droplet-leaf contact sound played");
+
+        leaves_collisions_count = 0;
+        last_leaf_contact_sound_played_time = clock();
+      }
+    }
+
   }
 
   /// Input control
