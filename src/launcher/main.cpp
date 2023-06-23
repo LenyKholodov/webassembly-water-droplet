@@ -37,7 +37,8 @@ namespace
 
 const float CAMERA_MOVE_SPEED = 10.f;
 const float CAMERA_ROTATE_SPEED = 0.5f;
-const float FOV_X = 90.f;
+const float FOV_X_LANDSCAPE = 90.f;
+const float FOV_Y_PORTRAIT = 90.f;
 const math::vec3f LIGHTS_ATTENUATION(1, 0.75, 0.25);
 const size_t LIGHTS_COUNT = 32;
 const float LIGHTS_POSITION_RADIUS = 30.f;
@@ -48,6 +49,9 @@ const float LIGHTS_MAX_RANGE = 50.f;
 const size_t MESHES_COUNT = 100;
 const float MESHES_POSITION_RADIUS = 3.f;
 const float DRAG_OFFSET_MULTIPLIER = 10.f;
+const math::vec3f CAM_POS_AR_16_9(18.f, 12.f, -1.f);
+const math::vec3f CAM_POS_AR_1_1(9.f, 6.f, -1.f);
+const math::vec3f CAM_POS_AR_9_16(12.f, 8.f, -1.f);
 
 float frand()
 {
@@ -84,8 +88,8 @@ int main(void)
       //application setup
 
     PerspectiveCamera::Pointer camera = PerspectiveCamera::create();
-    math::vec3f camera_position(9.f, 6.5f, 1.f);
-    math::anglef camera_pitch(math::degree(25.f));
+    math::vec3f camera_position;
+    math::anglef camera_pitch(math::degree(32.f));
     math::anglef camera_yaw(math::degree(-90.f));
     math::anglef camera_roll(math::degree(0.f));
     math::vec3f camera_move_direction(0.f);
@@ -100,6 +104,23 @@ int main(void)
     window_width = canvas_get_width();
     window_height = canvas_get_height();
 #endif
+
+    float window_ratio = window_width / (float) window_height;
+
+    if (window_ratio > 1)
+    {
+      camera_position = CAM_POS_AR_1_1 + (CAM_POS_AR_16_9 - CAM_POS_AR_1_1) * (window_ratio - 1.f) / (16.f / 9.f - 1.f);
+
+      camera->set_fov_x(math::degree(FOV_X_LANDSCAPE));
+      camera->set_fov_y(math::degree(FOV_X_LANDSCAPE / window_ratio));
+    }
+    else
+    {
+      camera_position = CAM_POS_AR_1_1 + (CAM_POS_AR_9_16 - CAM_POS_AR_1_1) * (window_ratio - 1.f) / (9.f / 16.f - 1.f);
+
+      camera->set_fov_x(math::degree(FOV_Y_PORTRAIT * window_ratio));
+      camera->set_fov_y(math::degree(FOV_Y_PORTRAIT));
+    }
 
     engine_log_info("Window size: %dx%d", window_width, window_height);
 
@@ -143,9 +164,10 @@ int main(void)
       }
 
       camera_move_direction += direction_change;
-    });
 
-    float window_ratio = window.width() / (float) window.height();
+      engine_log_info("CAM POS %f %f %f", camera_position.x, camera_position.y, camera_position.z);
+      engine_log_info("CAM orientaton %f %f %f", camera_pitch.to_degree(), camera_yaw.to_degree(), camera_roll.to_degree());
+    });
 
       //scene setup
 
@@ -153,8 +175,6 @@ int main(void)
 
     camera->set_z_near(1.f);
     camera->set_z_far(1000.f);
-    camera->set_fov_x(math::degree(FOV_X));
-    camera->set_fov_y(math::degree(FOV_X / window_ratio));
     camera->set_position(camera_position);
     camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
 

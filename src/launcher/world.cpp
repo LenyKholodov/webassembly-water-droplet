@@ -230,7 +230,7 @@ bool contact_added_callback (btManifoldPoint& contact_point,
   
   if (not_droplet_body_info->last_frame_time - not_droplet_body_info->prev_droplet_contact_time > PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING)
   {
-    engine_log_info("New contact added with group %d at position %f %f %f", not_droplet_body_info->collision_group, contact_point.getPositionWorldOnA().getX(), contact_point.getPositionWorldOnA().getY(), contact_point.getPositionWorldOnA().getZ());
+//    engine_log_info("New contact added with group %d at position %f %f %f", not_droplet_body_info->collision_group, contact_point.getPositionWorldOnA().getX(), contact_point.getPositionWorldOnA().getY(), contact_point.getPositionWorldOnA().getZ());
     media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
   }
 
