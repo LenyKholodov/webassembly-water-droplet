@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"type": "shell",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Make: build",
+			"command": "make build -j",
+			"args": [],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Make build task",
+			"envFile": "${workspaceFolder}/.env"
+		}
+	]
+}

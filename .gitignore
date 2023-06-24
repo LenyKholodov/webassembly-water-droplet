@@ -1,0 +1,6 @@
+dist/index.js
+dist/index.wasm
+dist/index.wasm.map
+dist/index.data
+tmp/
+.DS_Store

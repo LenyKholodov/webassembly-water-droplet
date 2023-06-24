@@ -1,0 +1,32 @@
+{
+    "env": {
+        "myDefaultIncludePath": [
+            "${workspaceFolder}",
+            "${workspaceFolder}/include"
+        ]
+    },
+    "configurations": [
+        {
+            "name": "Emscripten",
+            "intelliSenseMode": "clang-x64",
+            "includePath": [
+                "${myDefaultIncludePath}"
+            ],
+            "defines": [
+                "EMSCRIPTEN"
+            ],
+            "compilerPath": "/Users/leny/Library/Emscripten/upstream/emscripten/emcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            },
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}
