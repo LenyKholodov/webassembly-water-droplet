@@ -2,7 +2,6 @@
 #include <scene/mesh.h>
 #include <scene/light.h>
 #include <media/image.h>
-#include <media/sound_player.h>
 #include <application/application.h>
 #include <application/window.h>
 #include <common/exception.h>
@@ -30,7 +29,6 @@ using namespace engine::scene;
 using namespace engine::application;
 using namespace engine::scene;
 using namespace engine;
-using namespace engine::media::sound;
 
 namespace
 {
@@ -270,7 +268,7 @@ int main(void)
       //double relative_y = y / window.height();
 
       //engine_log_info("mouse move pos=(%.1f, %.1f) <-> (%.2f, %.2f)", x, y, relative_x, relative_y);
-      start_play_music = 10;
+      start_play_music = 30;
 
       double dx = x - last_mouse_x;
       double dy = y - last_mouse_y;

@@ -1,12 +1,10 @@
 #include <common/exception.h>
 #include <common/log.h>
-#include <media/sound_player.h>
+#include "shared.h"
 
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
 #endif
-
-using namespace engine::media::sound;
 
 namespace
 {

@@ -1216,7 +1216,7 @@ struct World::Impl: RigidBodyWorldCommonData
     if (fallen_droplet_particles_count > PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD)
     {
       generate_plant();
-      media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_ground);
+      SoundPlayer::play_sound(SoundId::droplet_ground);
       fallen_droplet_particles_count = 0;
     }
 
@@ -1344,7 +1344,7 @@ struct World::Impl: RigidBodyWorldCommonData
     {
       if (leaves_collisions_count >= PLAY_CONTACT_SOUND_COLLISIONS_COUNT)
       {
-        media::sound::SoundPlayer::play_sound(media::sound::SoundId::droplet_leaf);
+        SoundPlayer::play_sound(SoundId::droplet_leaf);
 
         engine_log_debug("Droplet-leaf contact sound played");
 

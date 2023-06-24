@@ -6,31 +6,4 @@ namespace engine {
 namespace media {
 namespace sound {
 
-enum class SoundId
-{
-  droplet_ground,
-  droplet_leaf
-};
-
-/// Sound player
-class SoundPlayer
-{
-  public:
-    /// Constructor
-    SoundPlayer();
-
-    /// Play music
-    void play_music(bool force = false) const;
-    
-    /// Play sound
-    static void play_sound(SoundId sound_id, float volume = 1.f);
-
-    /// Update
-    void update();
-
-  private:
-    struct Impl;
-    std::shared_ptr<Impl> impl;
-};
-
 }}}
