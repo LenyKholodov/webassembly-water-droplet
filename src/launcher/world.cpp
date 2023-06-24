@@ -31,7 +31,7 @@ const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.0002f;
+const float DROPLET_PARTICLE_FORCE = 0.0004f;
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.8;
@@ -363,7 +363,7 @@ struct WaterSurface
     mesh_node->set_mesh(mesh);
     mesh_node->set_environment_map_required(true);
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
-    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 10, WATER_SURFACE_SIZE));
+    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 2, WATER_SURFACE_SIZE));
   }
 
   void update()
@@ -373,7 +373,7 @@ struct WaterSurface
     int i1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
     int j1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
 
-    if (rand() % 10 ==0)
+    if (rand() % 50 ==0)
     {
       for(int i=-3; i<4; i++)
       {
@@ -404,7 +404,7 @@ struct WaterSurface
         v->normal     = normalize(v->normal);
 
         //constexpr float VIS = 0.005f;
-        constexpr float VIS = 0.05f;
+        constexpr float VIS = 0.075f;
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
