@@ -275,9 +275,35 @@ void Texture::set_data(size_t layer, size_t x, size_t y, size_t width, size_t he
 {
   bind();
 
-  engine_check(layer == 0); //no support of other textures for now
+  switch (impl->layers)
+  {
+    case 1:
+    {
+      engine_check(layer == 0);
 
-  glTexSubImage2D (GL_TEXTURE_2D, 0, (GLint)x, (GLint)y, (GLint)width, (GLint)height, impl->gl_uncompressed_format, impl->gl_uncompressed_type, data);
+      glTexSubImage2D (GL_TEXTURE_2D, 0, (GLint)x, (GLint)y, (GLint)width, (GLint)height, impl->gl_uncompressed_format, impl->gl_uncompressed_type, data);
+      break;
+    }
+    case 6:
+    {
+      engine_check(layer < 6);
+
+      static const GLenum cube_map_targets[] = {
+        GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
+      };
+
+      glTexSubImage2D (cube_map_targets[layer], 0, (GLint)x, (GLint)y, (GLint)width, (GLint)height, impl->gl_uncompressed_format, impl->gl_uncompressed_type, data);      
+
+      break;
+    }
+    default:
+      throw Exception::format("Invalid texture type with %d layers", impl->layers);
+  }
 }
 
 void Texture::get_data(size_t layer, size_t x, size_t y, size_t width, size_t height, void* data)

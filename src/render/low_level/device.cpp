@@ -151,6 +151,58 @@ Texture Device::create_texture2d(const char* image_path, size_t mips_count)
   return texture;
 }
 
+Texture Device::create_texture_cubemap(const char* image_path, size_t mips_count)
+{
+  engine_check_null(image_path);
+
+  std::vector<media::image::Image> images;
+
+  const char* end = image_path + strlen(image_path);
+  const char* s = end;
+
+  while (s != image_path && *s != '.') --s;
+
+  if (s == image_path)
+    s = end;
+
+  static const char* FACES[] = {
+    "_posx",
+    "_negx",
+    "_posy",
+    "_negy",
+    "_posz",
+    "_negz"
+  };
+
+  for (size_t i=0; i<6; ++i)
+  {
+    std::string full_path(image_path, s);
+
+    full_path += FACES[i];
+    full_path += s;
+
+    images.emplace_back(media::image::Image(full_path.c_str()));
+
+    if (i > 0)
+    {
+      engine_check(images[i].width() == images[0].width());
+      engine_check(images[i].height() == images[0].height());
+    }
+  }
+
+  Texture texture = create_texture_cubemap(images[0].width(), images[0].height(), PixelFormat_RGBA8, mips_count);
+
+  for (size_t i=0; i<6; ++i)
+  {
+    media::image::Image& image = images[i];
+    texture.set_data(i, 0, 0, image.width(), image.height(), image.bitmap());    
+  }
+
+  //texture.generate_mips();
+
+  return texture;
+}
+
 VertexBuffer Device::create_vertex_buffer(size_t count)
 {
   return VertexBuffer(impl->context, count);

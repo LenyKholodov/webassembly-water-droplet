@@ -510,6 +510,16 @@ struct DepthStencilState
     {}
 };
 
+/// Rasterization state description
+struct RasterizerState
+{
+  bool cull_enable; //is culling enabled
+
+  RasterizerState(bool cull_enable = true)
+    : cull_enable(cull_enable)
+    {}
+};
+
 /// Blending state descritption
 struct BlendState
 {
@@ -609,6 +619,12 @@ class Pass
 
     /// Set clearing flags
     void set_clear_flags(ClearFlags clear_flags);    
+
+    /// Set rasterizer state
+    void set_rasterizer_state(const RasterizerState& state);
+
+    /// Get depth stencil state
+    const RasterizerState& rasterizer_state() const;
 
     /// Set depth stencil state
     void set_depth_stencil_state(const DepthStencilState& state);
@@ -795,6 +811,9 @@ class Device
 
     /// Load texture2d
     Texture create_texture2d(const char* image_path, size_t mips_count = 100);
+
+    /// Create texture cubemap
+    Texture create_texture_cubemap(const char* image_path, size_t mips_count = 100);
 
     /// Create render buffer
     RenderBuffer create_render_buffer(size_t width, size_t height, PixelFormat format);

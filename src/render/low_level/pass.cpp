@@ -121,6 +121,7 @@ struct Pass::Impl
   ClearFlags clear_flags; //clear flags
   DepthStencilState depth_stencil_state; //depth stencil state
   BlendState blend_state; //blend state
+  RasterizerState rasterizer_state; //rasterizer state
   PropertyMap properties; //pass properties
   TextureList textures; //pass textures
 
@@ -132,6 +133,7 @@ struct Pass::Impl
     , clear_color(0.0f, 0.0f, 0.0f, 1.0f)
     , depth_stencil_state(false, false, CompareMode_AlwaysPass)
     , blend_state(false, BlendArgument_One, BlendArgument_Zero)
+    , rasterizer_state(true)
   {
     engine_check_null(context);
 
@@ -157,6 +159,7 @@ struct Pass::Impl
 
     bind_depth_stencil_state();
     bind_blend_state();
+    bind_rasterizer_state();
 
       //bind program
 
@@ -507,6 +510,18 @@ struct Pass::Impl
     }
   }
 
+  void bind_rasterizer_state()
+  {
+    if (rasterizer_state.cull_enable)
+    {
+      glEnable(GL_CULL_FACE);
+    }
+    else
+    {
+      glDisable(GL_CULL_FACE);
+    }
+  }
+
   void bind_blend_state()
   {
     if (blend_state.blend_enable)
@@ -587,6 +602,16 @@ void Pass::set_depth_stencil_state(const DepthStencilState& state)
 const DepthStencilState& Pass::depth_stencil_state() const
 {
   return impl->depth_stencil_state;
+}
+
+const RasterizerState& Pass::rasterizer_state() const
+{
+  return impl->rasterizer_state;
+}
+
+void Pass::set_rasterizer_state(const RasterizerState& state)
+{
+  impl->rasterizer_state = state;
 }
 
 void Pass::set_blend_state(const BlendState& state)

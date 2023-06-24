@@ -168,7 +168,7 @@ void main()
   vec4 specular = texture(specularTexture, texCoord);
   vec3 eyeDirection = normalize(worldViewPosition - position);
   
-  vec3 color = vec3(0.0);
+  vec3 color = vec3(0);
 
   for (int i = 0; i < MAX_POINT_LIGHTS; ++i)
   {  

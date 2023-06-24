@@ -95,6 +95,9 @@ const float WATER_SURFACE_OFFSET = GROUND_OFFSET - 0.1;
 const size_t WATER_SURFACE_GRID_SIZE = 128;
 const char* WATER_SURFACE_MATERIAL_NAME = DROPLET_HULL_MATERIAL;
 
+const char* SKY_MATERIAL = "sky";
+const float SKY_RADIUS = 100.0f;
+const char* SKY_TEXTURE_PATH = "media/textures/sky.png";
 
 //todo: remove motion states from rigid bodies
 
@@ -360,7 +363,7 @@ struct WaterSurface
     mesh_node->set_mesh(mesh);
     mesh_node->set_environment_map_required(true);
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
-    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 1, WATER_SURFACE_SIZE));
+    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 10, WATER_SURFACE_SIZE));
   }
 
   void update()
@@ -370,7 +373,7 @@ struct WaterSurface
     int i1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
     int j1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
 
-    if (rand() % 100 ==0)
+    if (rand() % 10 ==0)
     {
       for(int i=-3; i<4; i++)
       {
@@ -396,13 +399,12 @@ struct WaterSurface
       {
         v->position.y = n->U[i][j];
         v->normal.x   = n->U[i-1][j]-n->U[i+1][j];
-        //v->normal.y   = 4.0f / float(WATER_SURFACE_GRID_SIZE);
-        v->normal.y   = 10.0f / float(WATER_SURFACE_GRID_SIZE);
+        v->normal.y   = 4.0f / float(WATER_SURFACE_GRID_SIZE);
         v->normal.z   = n->U[i][j-1]-n->U[i][j+1];
         v->normal     = normalize(v->normal);
 
         //constexpr float VIS = 0.005f;
-        constexpr float VIS = 0.005f;
+        constexpr float VIS = 0.05f;
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
@@ -447,6 +449,7 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
+  Material sky_material;
   std::vector<std::shared_ptr<Plant>> plants;
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
@@ -459,6 +462,7 @@ struct World::Impl: RigidBodyWorldCommonData
   std::unordered_map<std::pair<int, int>, std::shared_ptr<PlantLight>, PairHasher> plant_lights;
   size_t fallen_droplet_particles_count = 0;
   WaterSurface water_surface;
+  scene::Mesh::Pointer sky;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -483,15 +487,23 @@ struct World::Impl: RigidBodyWorldCommonData
     load_materials(leaf_model, materials, render_device);
     load_materials(plant_model, materials, render_device);
 
-      //configure droplet material
+      //configure materials
 
     droplet_material.set_shader_tags("fresnel");
     droplet_material.set_textures(materials.find("mtl1")->textures());
     droplet_material.set_properties(materials.find("mtl1")->properties());
 
-      //create ground
+    Texture sky_texture = render_device.create_texture_cubemap(SKY_TEXTURE_PATH);
+
+    sky_texture.set_min_filter(TextureFilter_Linear);
+
+    TextureList sky_textures = sky_material.textures();
+    sky_textures.insert("diffuseTexture", sky_texture);
+
+    sky_material.set_shader_tags("sky");
 
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
+    materials.insert(SKY_MATERIAL, sky_material);
 
       //scale meshes
 
@@ -517,6 +529,11 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
 
     //droplet_particle_shape->setMargin(COLLISION_MARGIN);
+
+    sky = scene::Mesh::create();
+    
+    sky->set_mesh(media::geometry::MeshFactory::create_sphere(SKY_MATERIAL, SKY_RADIUS, math::vec3f(0.0f)));
+    sky->bind_to_parent(*scene_root);
 
     setup_ground();
 
