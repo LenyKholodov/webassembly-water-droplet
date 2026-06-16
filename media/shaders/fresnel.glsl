@@ -21,8 +21,8 @@ varying vec3 refractionDir;
 varying vec3 reflectionDir;
 varying float fresnel;
 
-const float eta = 0.0;
-//const float eta = 0.75;
+const float eta = 0.78; // air->water refraction ratio (~1/1.33): the droplet now visibly refracts the environment
+//const float eta = 0.0;
 //const float eta = 0.05;
 const float fresnelPower = 5.0;
 //const float F = 0.05;

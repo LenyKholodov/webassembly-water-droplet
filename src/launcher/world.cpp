@@ -73,8 +73,8 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
-const float LIGHTS_MIN_INTENSITY = 0.16f;
-const float LIGHTS_MAX_INTENSITY = 0.28;
+const float LIGHTS_MIN_INTENSITY = 0.10f;
+const float LIGHTS_MAX_INTENSITY = 0.18;
 const float LIGHTS_MIN_RANGE = 2.5;
 const float LIGHTS_MAX_RANGE = 3.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
@@ -90,17 +90,17 @@ const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
 
-const float WATER_SURFACE_SIZE = GROUND_SIZE * 1.4f; // a pool covering the platform with a margin (was *5 -> too large for ripples to read)
+const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
 const float WATER_SURFACE_OFFSET = WATER_LEVEL;
-const size_t WATER_SURFACE_GRID_SIZE = 128;
+const size_t WATER_SURFACE_GRID_SIZE = 160;          // a bit denser so ripples stay smooth on the larger plane
 const float WATER_DEPTH = WATER_LEVEL - GROUND_OFFSET;  // depth of the pool over the platform (used to clamp wave troughs)
-const float WATER_HEIGHT_SCALE = 1.5f;               // gentle vertical displacement (large waves clipped through the platform)
-const float WATER_NORMAL_STEEPNESS = 22.0f;          // how strongly ripples perturb the surface normal (drives the reflection)
-const float WATER_SPLASH_STRENGTH = 0.12f;           // peak ripple amplitude injected when a droplet hits the water
+const float WATER_HEIGHT_SCALE = 0.5f;               // small vertical displacement -> gentle ripples, no platform clipping
+const float WATER_NORMAL_STEEPNESS = 26.0f;          // how strongly ripples perturb the surface normal (drives the reflection)
+const float WATER_SPLASH_STRENGTH = 0.05f;           // gentle droplet impact -> a beautiful spreading wave, not a big disturbance
 const int   WATER_SPLASH_RADIUS = 5;                 // radius (in grid cells) of the impact ring
-const float WATER_AMBIENT_SPLASH_CHANCE = 0.005f;    // per-frame probability of a faint random ripple (keeps the pool subtly alive)
-const float WATER_AMBIENT_SPLASH_STRENGTH = 0.025f;  // amplitude of those ambient ripples (very low)
+const float WATER_AMBIENT_SPLASH_CHANCE = 0.06f;     // frequent but...
+const float WATER_AMBIENT_SPLASH_STRENGTH = 0.006f;  // ...tiny random ripples, like wind on water
 const char* WATER_SURFACE_MATERIAL_NAME = "water";
 
 const char* SKY_MATERIAL = "sky";
@@ -417,7 +417,7 @@ struct WaterSurface
         v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS;
         v->normal     = normalize(v->normal);
 
-        constexpr float VIS = 0.030f; // lower viscosity -> ripples propagate further before settling
+        constexpr float VIS = 0.060f; // higher viscosity -> smoother, more graceful water motion
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
@@ -776,18 +776,8 @@ struct World::Impl: RigidBodyWorldCommonData
 
         Leaf leaf(last_frame_time, *this);
 
-          //configure light
-
-        leaf.point_light = scene::PointLight::create();
-
-        leaf.point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
-        leaf.point_light->set_attenuation(LIGHTS_ATTENUATION);
-        leaf.point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
-        leaf.point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
-
-        //leaf.point_light->bind_to_parent(*leaf.phys_body->mesh);
-        leaf.point_light->set_position(initial_center + LEAF_LIGHT_OFFSET);
-        leaf.point_light->bind_to_parent(*scene_root);
+          //no per-leaf lights: the tree is lit by the soft moonlight (the flying spot) instead, to
+          //avoid the over-lit/bioluminescent look and keep a soft mysterious night mood.
 
           //configure leaf constraint
 

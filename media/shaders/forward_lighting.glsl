@@ -45,7 +45,7 @@ uniform sampler2D normalTexture;
 uniform sampler2D specularTexture;
 uniform sampler2D shadowTexture;
 
-const float MIN_DIFFUSE_AMOUNT = 0.1; // ambient light
+const float MIN_DIFFUSE_AMOUNT = 0.04; // low ambient -> darker, more mysterious night shadows
 const float DIFFUSE_AMOUNT = 1.0; // diffuse light multiplier
 const float SPECULAR_AMOUNT = 1.0; // specular light multiplier
 const float SHININESS_NORMALIZER = 1000.0; // workaround for RGBA8 precision for shininess

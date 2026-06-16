@@ -187,10 +187,11 @@ int main(void)
     scene::SpotLight::Pointer spot_light = scene::SpotLight::create();
 
     //spot_light->set_attenuation(LIGHTS_ATTENUATION);
-    spot_light->set_range(30.f);
-    spot_light->set_angle(math::degree(60.f));
+    spot_light->set_range(45.f);
+    spot_light->set_angle(math::degree(55.f));
     spot_light->set_intensity(100.5f);
-    spot_light->set_exponent(0.8f);
+    spot_light->set_exponent(0.35f);                                  // soft falloff
+    spot_light->set_light_color(math::vec3f(0.50f, 0.62f, 0.88f));    // cool moonlight tint
     //spot_light->set_position(math::vec3f(-20.f, 20.f, 0.f));
     //spot_light->set_position(math::vec3f(0.f, 3.f, 0.f));
     spot_light->bind_to_parent(*lights_parent);
@@ -425,12 +426,12 @@ int main(void)
 
       float time = Application::time();
 
-      static const float SPOT_LIGHT_ROTATION_FREQUENCY = 0.25f;
+      static const float SPOT_LIGHT_ROTATION_FREQUENCY = 0.12f; // slow, mysterious drift
 
-      // the flying box is the scene's moving key light: circling above the pool
-      spot_light->set_intensity(4.0f);
+      // the flying box is a soft moonlight high above, gently circling and focused on the tree
+      spot_light->set_intensity(1.2f);
 
-      spot_light->set_position(math::vec3f(cos(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 14.f, 9.f, sin(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 14.f));
+      spot_light->set_position(math::vec3f(cos(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 9.f, 18.f, sin(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 9.f));
       spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
 
         //render scene

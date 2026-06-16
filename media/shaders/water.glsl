@@ -41,10 +41,10 @@ uniform float spotLightRanges[MAX_SPOT_LIGHTS];
 const float PLATFORM_Y   = -7.0;   // matches GROUND_OFFSET
 const float DEPTH_SCALE  = 7.0;    // view-ray length through water at which it becomes fully reflective/opaque
 const vec3  WATER_AMBIENT = vec3(0.02, 0.035, 0.06);
-const float WATER_SHININESS = 90.0;
-const float WATER_SPECULAR_AMOUNT = 1.0;
+const float WATER_SHININESS = 120.0;       // tighter, more delicate glints
+const float WATER_SPECULAR_AMOUNT = 0.35;  // soft light glow on the water (was too bright)
 const float MIN_ALPHA = 0.22;      // most-transparent (shallow, face-on) alpha
-const float SKY_REFLECT = 0.8;     // brightness of the reflected sky
+const float SKY_REFLECT = 0.75;    // brightness of the reflected sky
 
 float pointSpecular(vec3 Lp, vec3 Lcolor, vec3 La, float Lrange, vec3 N, vec3 V, out vec3 outSpec)
 {
@@ -86,7 +86,7 @@ void main()
 
   vec3  surface = WATER_AMBIENT + reflectColor * reflectivity + specular * WATER_SPECULAR_AMOUNT;
   float alpha   = mix(MIN_ALPHA, 1.0, reflectivity);
-  alpha = clamp(alpha + dot(specular, vec3(0.33)) * WATER_SPECULAR_AMOUNT, 0.0, 1.0); // glints read as opaque
+  alpha = clamp(alpha + dot(specular, vec3(0.2)) * WATER_SPECULAR_AMOUNT, 0.0, 1.0); // glints read as slightly opaque
 
   gl_FragColor = vec4(surface, alpha);
 }
