@@ -38,16 +38,16 @@ uniform vec3  spotLightColors[MAX_SPOT_LIGHTS];
 uniform vec3  spotLightAttenuations[MAX_SPOT_LIGHTS];
 uniform float spotLightRanges[MAX_SPOT_LIGHTS];
 
-// Same reflection/refraction settings as the droplet (fresnel.glsl):
-const float eta = 0.0;             // refract() with eta 0 returns -N -> the droplet's lens trick
+// Flat mirror: the sky is infinitely far, so reflecting it through the cubemap IS the correct
+// planar reflection. Refraction = the actual bottom (the platform), which shows through the
+// alpha-blended transparency below the water; fresnel blends reflection (grazing) vs the bottom (face-on).
+const float F = 0.03;              // base reflectance (Schlick F0)
 const float fresnelPower = 5.0;
-const float F = 0.05;              // base reflectance
-
-const vec3  WATER_AMBIENT = vec3(0.02, 0.035, 0.06);
-const float WATER_SHININESS = 120.0;       // tighter, more delicate glints
-const float WATER_SPECULAR_AMOUNT = 0.35;  // soft light glow on the water
-const float MIN_ALPHA = 0.22;      // most-transparent (face-on) alpha
-const float SKY_REFLECT = 0.85;    // brightness of the reflected/refracted sky
+const float REFLECT_FLOOR = 0.45;  // min opacity face-on -> reads as a mirror, with the bottom still visible
+const vec3  WATER_TINT = vec3(0.012, 0.025, 0.045); // faint deep-water colour over the transmitted bottom
+const float WATER_SHININESS = 140.0;       // tight, delicate glints
+const float WATER_SPECULAR_AMOUNT = 0.30;
+const float SKY_REFLECT = 1.0;
 
 void pointSpecular(vec3 Lp, vec3 Lcolor, vec3 La, float Lrange, vec3 N, vec3 V, inout vec3 spec)
 {
@@ -61,27 +61,27 @@ void main()
 {
   vec3 N = normalize(worldNormal);
   vec3 V = normalize(worldViewPosition - worldPos);  // surface -> eye
-  vec3 inVec = -V;                                    // eye -> surface
 
-  // reflection + refraction of the sky cubemap, mixed by fresnel (the droplet's settings)
-  vec3 reflectDir   = reflect(inVec, N);
-  vec3 refractDir   = refract(inVec, N, eta);         // eta 0 -> -N
-  vec3 reflectColor = textureCube(skyTexture, reflectDir).xyz;
-  vec3 refractColor = textureCube(skyTexture, refractDir).xyz;
-  float fresnel     = clamp(F + (1.0 - F) * pow(1.0 + dot(inVec, N), fresnelPower), 0.0, 1.0);
-  vec3 resultColor  = mix(refractColor, reflectColor, fresnel) * SKY_REFLECT;
+  // Schlick fresnel: grazing (cos~0) -> 1 (full mirror), face-on (cos~1) -> F (see the bottom)
+  float cosTheta = max(dot(N, V), 0.0);
+  float fresnel  = F + (1.0 - F) * pow(1.0 - cosTheta, fresnelPower);
 
-  // specular glints from the scene lights; ripples break them into moving highlights
+  // flat-mirror reflection of the sky; the ripple-perturbed normal makes the reflection shimmer
+  vec3 reflectColor = textureCube(skyTexture, reflect(-V, N)).xyz * SKY_REFLECT;
+
+  // specular glints from the scene lights (moonlight + fireflies)
   vec3 specular = vec3(0.0);
   for (int i = 0; i < MAX_POINT_LIGHTS; ++i)
     pointSpecular(pointLightPositions[i], pointLightColors[i], pointLightAttenuations[i], pointLightRanges[i], N, V, specular);
   for (int i = 0; i < MAX_SPOT_LIGHTS; ++i)
     pointSpecular(spotLightPositions[i], spotLightColors[i], spotLightAttenuations[i], spotLightRanges[i], N, V, specular);
 
-  vec3  surface = WATER_AMBIENT + resultColor + specular * WATER_SPECULAR_AMOUNT;
-  // transparency from fresnel (no depth factor): face-on transparent, grazing reflective
-  float alpha   = mix(MIN_ALPHA, 1.0, fresnel);
-  alpha = clamp(alpha + dot(specular, vec3(0.2)) * WATER_SPECULAR_AMOUNT, 0.0, 1.0); // glints read as slightly opaque
+  // surface colour = the mirrored sky + glints + faint tint; the bottom shows via the alpha below.
+  vec3 surface = reflectColor + WATER_TINT + specular * WATER_SPECULAR_AMOUNT;
+
+  // opacity: full mirror at grazing, partly transparent (the bottom = refraction) when looking down
+  float alpha = mix(REFLECT_FLOOR, 1.0, fresnel);
+  alpha = clamp(alpha + dot(specular, vec3(0.3)) * WATER_SPECULAR_AMOUNT, 0.0, 1.0);
 
   gl_FragColor = vec4(surface, alpha);
 }
