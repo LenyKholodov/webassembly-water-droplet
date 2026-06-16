@@ -21,9 +21,12 @@ varying vec3 refractionDir;
 varying vec3 reflectionDir;
 varying float fresnel;
 
-const float eta = 0.95;        // subtle refraction (less bending) -> a calm, realistic water bead
+const float eta = 0.0;
+//const float eta = 0.75;
+//const float eta = 0.05;
 const float fresnelPower = 5.0;
-const float F = 0.02;          // water's real base reflectance (Schlick F0 ~0.02)
+//const float F = 0.05;
+const float F = 0.05;
 
 void main()
 {
