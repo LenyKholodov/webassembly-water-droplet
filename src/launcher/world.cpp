@@ -101,11 +101,25 @@ const float WATER_SPLASH_STRENGTH = 0.05f;           // gentle droplet impact ->
 const int   WATER_SPLASH_RADIUS = 5;                 // radius (in grid cells) of the impact ring
 const float WATER_AMBIENT_SPLASH_CHANCE = 0.06f;     // frequent but...
 const float WATER_AMBIENT_SPLASH_STRENGTH = 0.006f;  // ...tiny random ripples, like wind on water
+const float WATER_WAVE_SPEED = 0.25f;                // <1 slows wave propagation -> calm, relaxing water
 const char* WATER_SURFACE_MATERIAL_NAME = "water";
 
 const char* SKY_MATERIAL = "sky";
 const float SKY_RADIUS = 100.0f;
 const char* SKY_TEXTURE_PATH = "media/textures/sky.jpg";
+
+// Fireflies: small green additive glow spheres that rise around the tree, pulse, and wander,
+// each carrying a local green point light. Reference: real fireflies drift slowly upward with
+// a gentle wandering path and a soft on/off glow.
+const size_t FIREFLY_COUNT = 8;
+const float FIREFLY_RADIUS = 0.07f;
+const float FIREFLY_SPAWN_RADIUS = 3.2f;             // scattered around the tree
+const float FIREFLY_BOTTOM = GROUND_OFFSET + 0.5f;   // rise from near the water...
+const float FIREFLY_TOP = 2.5f;                      // ...up past the top of the tree
+const float FIREFLY_DRIFT = 1.1f;                    // horizontal wander amplitude
+const math::vec3f FIREFLY_COLOR(0.35f, 1.0f, 0.45f); // green
+const float FIREFLY_LIGHT_INTENSITY = 0.32f;         // soft local green lighting on leaves/droplets
+const float FIREFLY_LIGHT_RANGE = 2.8f;
 
 //todo: remove motion states from rigid bodies
 
@@ -232,6 +246,19 @@ struct Droplet
   scene::Mesh::Pointer hull_mesh;
   scene::PointLight::Pointer point_light;
   size_t remove_counter = 0;
+};
+
+struct Firefly
+{
+  scene::Mesh::Pointer body;            // small green additive-glow sphere
+  scene::PointLight::Pointer light;     // local green light it carries
+  Material material;                    // per-firefly material (carries the "glowColor" uniform)
+  math::vec3f base;                     // x,z centre of its wandering path
+  float time_offset = 0;                // de-syncs the rise cycle between fireflies
+  float lifetime = 12;                  // seconds for one bottom->top rise
+  float pulse_speed = 2, pulse_phase = 0;
+  float drift_speed_x = 0.5f, drift_speed_z = 0.5f;
+  float drift_phase_x = 0, drift_phase_z = 0;
 };
 
 void find_nearest_point(
@@ -424,7 +451,7 @@ struct WaterSurface
                 n->U[i][j+1]+
                 n->U[i][j-1])*0.25f-n->U[i][j];
 
-        p->U[i][j] = ((2.0f-VIS) * n->U[i][j] - p->U[i][j] * (1.0f-VIS) + laplas);
+        p->U[i][j] = ((2.0f-VIS) * n->U[i][j] - p->U[i][j] * (1.0f-VIS) + laplas * WATER_WAVE_SPEED);
       }
     }
 
@@ -477,6 +504,7 @@ struct World::Impl: RigidBodyWorldCommonData
   size_t fallen_droplet_particles_count = 0;
   WaterSurface water_surface;
   scene::Mesh::Pointer sky;
+  std::vector<Firefly> fireflies;
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -556,10 +584,84 @@ struct World::Impl: RigidBodyWorldCommonData
     sky->bind_to_parent(*scene_root);
 
     setup_ground();
+    setup_fireflies(scene_renderer);
 
     if (!gContactAddedCallback)
     {
       gContactAddedCallback = contact_added_callback;
+    }
+  }
+
+  void setup_fireflies(SceneRenderer& scene_renderer)
+  {
+    static const float TWO_PI = 6.2831853f;
+    MaterialList materials = scene_renderer.materials();
+
+    for (size_t i = 0; i < FIREFLY_COUNT; i++)
+    {
+      Firefly f;
+
+      std::string name = "firefly_" + std::to_string(i);
+
+      f.material.set_shader_tags("firefly");
+      PropertyMap fprops = f.material.properties();
+      fprops.set("glowColor", math::vec3f(0.0f)); // start invisible
+      materials.insert(name.c_str(), f.material);
+
+      f.body = scene::Mesh::create();
+      f.body->set_mesh(media::geometry::MeshFactory::create_sphere(name.c_str(), FIREFLY_RADIUS));
+      f.body->bind_to_parent(*scene_root);
+
+      f.light = scene::PointLight::create();
+      f.light->set_light_color(FIREFLY_COLOR);
+      f.light->set_attenuation(LIGHTS_ATTENUATION);
+      f.light->set_intensity(0.0f);
+      f.light->set_range(FIREFLY_LIGHT_RANGE);
+      f.light->bind_to_parent(*scene_root);
+
+      float ang = frand() * TWO_PI;
+      float rad = FIREFLY_SPAWN_RADIUS * sqrt(frand());
+      f.base = math::vec3f(cos(ang) * rad, 0.0f, sin(ang) * rad);
+      f.time_offset   = frand() * 100.0f;
+      f.lifetime      = crand(9.0f, 17.0f);
+      f.pulse_speed   = crand(1.5f, 3.5f);
+      f.pulse_phase   = frand() * TWO_PI;
+      f.drift_speed_x = crand(0.25f, 0.6f);
+      f.drift_speed_z = crand(0.25f, 0.6f);
+      f.drift_phase_x = frand() * TWO_PI;
+      f.drift_phase_z = frand() * TWO_PI;
+
+      fireflies.push_back(f);
+    }
+  }
+
+  void update_fireflies()
+  {
+    float t = last_frame_time / float(CLOCKS_PER_SEC);
+
+    for (Firefly& f : fireflies)
+    {
+      float life = (t + f.time_offset) / f.lifetime;
+      life = life - floor(life);                                  // 0..1 rise cycle
+
+      float y = FIREFLY_BOTTOM + (FIREFLY_TOP - FIREFLY_BOTTOM) * life;
+      float x = f.base.x + sin(t * f.drift_speed_x + f.drift_phase_x) * FIREFLY_DRIFT;
+      float z = f.base.z + sin(t * f.drift_speed_z + f.drift_phase_z) * FIREFLY_DRIFT;
+
+      float pulse = 0.45f + 0.55f * sin(t * f.pulse_speed + f.pulse_phase);
+      float fade  = 1.0f;                                         // appear/disappear via transparency
+      if (life < 0.12f)      fade = life / 0.12f;
+      else if (life > 0.85f) fade = (1.0f - life) / 0.15f;
+
+      float glow = pulse * fade;
+      if (glow < 0.0f) glow = 0.0f;
+
+      math::vec3f pos(x, y, z);
+      f.body->set_position(pos);
+      PropertyMap fprops = f.material.properties();
+      fprops.set("glowColor", FIREFLY_COLOR * glow);
+      f.light->set_position(pos);
+      f.light->set_intensity(FIREFLY_LIGHT_INTENSITY * glow);
     }
   }
 
@@ -1382,6 +1484,10 @@ struct World::Impl: RigidBodyWorldCommonData
       //update water surface
 
     water_surface.update();
+
+      //update fireflies
+
+    update_fireflies();
   }
 
   /// Input control

@@ -18,6 +18,7 @@ static const char* FORWARD_LIGHTING_PROGRAM_FILE = "media/shaders/forward_lighti
 static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
 static const char* SKY_PROGRAM_FILE = "media/shaders/sky.glsl";
 static const char* WATER_PROGRAM_FILE = "media/shaders/water.glsl";
+static const char* FIREFLY_PROGRAM_FILE = "media/shaders/firefly.glsl";
 
 ///
 /// Forward lighting pass
@@ -31,10 +32,12 @@ struct ForwardLightingPass : IScenePass
       , fresnel_program(device.create_program_from_file(FRESNEL_PROGRAM_FILE))
       , sky_program(device.create_program_from_file(SKY_PROGRAM_FILE))
       , water_program(device.create_program_from_file(WATER_PROGRAM_FILE))
+      , firefly_program(device.create_program_from_file(FIREFLY_PROGRAM_FILE))
       , forward_lighting_pass(device.create_pass(forward_lighting_program))
       , fresnel_pass(device.create_pass(fresnel_program))
       , sky_pass(device.create_pass(sky_program))
       , water_pass(device.create_pass(water_program))
+      , firefly_pass(device.create_pass(firefly_program))
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
 
@@ -52,10 +55,16 @@ struct ForwardLightingPass : IScenePass
       water_pass.set_blend_state(BlendState(true, BlendArgument_SourceAlpha, BlendArgument_InverseSourceAlpha));
       water_pass.set_clear_flags(Clear_None);
 
+      // fireflies are additive glows: blend (One, One), depth-tested against the scene but no depth write
+      firefly_pass.set_depth_stencil_state(DepthStencilState(true, false, CompareMode_Less));
+      firefly_pass.set_blend_state(BlendState(true, BlendArgument_One, BlendArgument_One));
+      firefly_pass.set_clear_flags(Clear_None);
+
       size_t default_pass_index = pass_group.add_pass(nullptr, forward_lighting_pass, 0);
       pass_group.add_pass("fresnel", fresnel_pass, 1); // opaque droplets
       pass_group.add_pass("sky", sky_pass, 2);         // sky fills the background
       pass_group.add_pass("water", water_pass, 3);     // transparent water blends over everything
+      pass_group.add_pass("firefly", firefly_pass, 4); // additive firefly glows on top
       pass_group.set_default_pass(default_pass_index);
 
       engine_log_debug("Forward Lighting pass has been created");
@@ -92,6 +101,7 @@ struct ForwardLightingPass : IScenePass
       fresnel_pass.set_frame_buffer(context.default_frame_buffer());
       sky_pass.set_frame_buffer(context.default_frame_buffer());
       water_pass.set_frame_buffer(context.default_frame_buffer());
+      firefly_pass.set_frame_buffer(context.default_frame_buffer());
 
         //clean pass
 
@@ -99,6 +109,7 @@ struct ForwardLightingPass : IScenePass
       fresnel_pass.remove_all_primitives();
       sky_pass.remove_all_primitives();
       water_pass.remove_all_primitives();
+      firefly_pass.remove_all_primitives();
 
         //traverse scene
 
@@ -302,10 +313,12 @@ struct ForwardLightingPass : IScenePass
     Program fresnel_program;
     Program sky_program;
     Program water_program;
+    Program firefly_program;
     Pass forward_lighting_pass;
     Pass fresnel_pass;
     Pass sky_pass;
     Pass water_pass;
+    Pass firefly_pass;
     PassGroup pass_group;
     FrameNode frame;    
     SceneVisitor visitor;

@@ -47,7 +47,8 @@ uniform sampler2D shadowTexture;
 
 const float MIN_DIFFUSE_AMOUNT = 0.04; // low ambient -> darker, more mysterious night shadows
 const float DIFFUSE_AMOUNT = 1.0; // diffuse light multiplier
-const float SPECULAR_AMOUNT = 1.0; // specular light multiplier
+const float SPECULAR_AMOUNT = 0.06; // leaves are matte, not metallic -> almost no specular
+const float NORMAL_RELIEF = 2.2; // amplify the normal-map bumps for more visible surface relief
 const float SHININESS_NORMALIZER = 1000.0; // workaround for RGBA8 precision for shininess
 
 #define MAX_POINT_LIGHTS 32
@@ -117,35 +118,15 @@ float PCF(in vec4 shadowTexCoord)
   return sum / float (STEPS_COUNT * STEPS_COUNT);
 }
 
-float dfd(vec2 p)
-{ 
-    return p.x * p.x - p.y;
-}
-
-mat3 CotangentFrame(const in vec3 N, const in vec3 p, const in vec2 uv)
+// Tangent frame without screen-space derivatives (unavailable for ES 1.00 shaders here):
+// build a stable basis from the geometric normal and world up. Not UV-aligned, but it gives
+// consistent surface relief from the normal map.
+mat3 TangentFrame(const in vec3 N)
 {
-  // get edge vectors of the pixel triangle
-  //vec3 dp1 = dFdx(p);
-  //vec3 dp2 = dFdy(p);
-  //vec2 duv1 = dFdx(uv);
-  //vec2 duv2 = dFdy(uv);
-
-  float c = dfd(uv);
-  vec3 dp1 = vec3(dfd(uv + p.x) - c);
-  vec3 dp2 = vec3(dfd(uv + p.y) - c);
-  vec2 duv1 = vec2(dfd(uv));
-  vec2 duv2 = vec2(dfd(uv));
-
-  // solve the linear system
-  vec3 dp2perp = cross(dp2, N);
-  vec3 dp1perp = cross(N, dp1);
-  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-
-  // construct a scale-invariant frame
-  float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
-    
-  return mat3(T * invmax, B * invmax, N);
+  vec3 T = cross(vec3(0.0, 1.0, 0.0), N);
+  T = dot(T, T) > 0.001 ? normalize(T) : vec3(1.0, 0.0, 0.0);
+  vec3 B = cross(N, T);
+  return mat3(T, B, N);
 }
 
 void main()
@@ -158,9 +139,10 @@ void main()
 
   vec3 normalizedEyeDirection = normalize(eyeDirection.xyz);
 
-  mat3 tbn = CotangentFrame(normalize(normal.xyz), normalizedEyeDirection, texCoord);
+  mat3 tbn = TangentFrame(normalize(normal.xyz));
 
   vec3 mappedNormal = texture(normalTexture, texCoord).xyz * 2.0 - 1.0;
+  mappedNormal.xy *= NORMAL_RELIEF; // stronger relief
 
   mappedNormal = normalize(tbn * mappedNormal);
 
