@@ -4,6 +4,7 @@ MEDIA_FILES := $(wildcard media/textures/*) $(wildcard media/shaders/*) $(wildca
 COMMON_FLAGS += -s USE_SDL=2 -sUSE_SDL_IMAGE=2 -s SDL2_IMAGE_FORMATS='["png","jpg"]' -s USE_BULLET=1
 LINK_FLAGS := -s WASM=1  -sNO_DISABLE_EXCEPTION_CATCHING  -s 'EXPORTED_RUNTIME_METHODS=["UTF8ToString"]' 
 LINK_FLAGS +=  -sALLOW_MEMORY_GROWTH
+LINK_FLAGS += -sMAX_WEBGL_VERSION=2
 LINK_FLAGS += -gsource-map --source-map-base "http://localhost:8080/"
 LINK_FLAGS += $(COMMON_FLAGS)
 #LINK_FLAGS += -sSTACK_SIZE=50MB -sINITIAL_MEMORY=120MB

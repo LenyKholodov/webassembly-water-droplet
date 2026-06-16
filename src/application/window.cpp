@@ -157,7 +157,7 @@ struct Window::Impl
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true); 
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, false);
 #else
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); //request WebGL2 (GL ES 3.0): seamless cubemap filtering, NPOT, sized formats
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 

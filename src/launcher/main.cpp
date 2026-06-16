@@ -425,12 +425,12 @@ int main(void)
 
       float time = Application::time();
 
-      static const float SPOT_LIGHT_ROTATION_FREQUENCY = 0.1;
+      static const float SPOT_LIGHT_ROTATION_FREQUENCY = 0.25f;
 
+      // the flying box is the scene's moving key light: bright, circling above the pool
+      spot_light->set_intensity(8.0f);
 
-      spot_light->set_intensity((1.0f + cos(time * SPOT_LIGHT_ROTATION_FREQUENCY)) / 2.0f * 1.0f + 0.25f);
-
-      spot_light->set_position(math::vec3f(cos(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 10, 10.f, sin(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 10));
+      spot_light->set_position(math::vec3f(cos(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 14.f, 9.f, sin(time * SPOT_LIGHT_ROTATION_FREQUENCY) * 14.f));
       spot_light->world_look_to(math::vec3f(0.0f), math::vec3f(0, 1, 0));
 
         //render scene

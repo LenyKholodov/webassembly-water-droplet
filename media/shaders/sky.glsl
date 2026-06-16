@@ -27,7 +27,8 @@ uniform samplerCube diffuseTexture;
 
 void main()
 {
-  vec3 color = textureCube(diffuseTexture, normalize(position).xyz).xyz * 0.05;
+  const float SKY_BRIGHTNESS = 1.0;
+  vec3 color = textureCube(diffuseTexture, normalize(position).xyz).xyz * SKY_BRIGHTNESS;
   //gl_FragColor = vec4(eyeDirection.xyz, 1.0);
   gl_FragColor = vec4(color, 1.0);
 }

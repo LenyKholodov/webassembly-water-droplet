@@ -1,0 +1,13 @@
+Skybox cubemap (sky_posx/negx/posy/negy/posz/negz.jpg)
+=======================================================
+
+Derived from "The Milky Way panorama" by ESO / S. Brunier.
+Source:  https://www.eso.org/public/images/eso0932a/
+License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+
+The original equirectangular panorama was reprojected into 6 cube-map
+faces and tonemapped for this project. Attribution is REQUIRED wherever
+this work is distributed. Required credit line:
+
+  Milky Way panorama: ESO/S. Brunier — licensed under CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/), reprojected to a cubemap.

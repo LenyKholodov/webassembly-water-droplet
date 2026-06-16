@@ -35,7 +35,11 @@ struct ForwardLightingPass : IScenePass
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
 
-      fresnel_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+      // water + droplets (the "fresnel" material) are semi-transparent: render them AFTER the
+      // opaque scene and the sky, with alpha blending and depth-write off, so the submerged
+      // platform shows through and ripples read against it.
+      fresnel_pass.set_depth_stencil_state(DepthStencilState(true, false, CompareMode_Less));
+      fresnel_pass.set_blend_state(BlendState(true, BlendArgument_SourceAlpha, BlendArgument_InverseSourceAlpha));
       fresnel_pass.set_clear_flags(Clear_None);
 
       sky_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
@@ -43,8 +47,8 @@ struct ForwardLightingPass : IScenePass
       sky_pass.set_clear_flags(Clear_None);
 
       size_t default_pass_index = pass_group.add_pass(nullptr, forward_lighting_pass, 0);
-      pass_group.add_pass("fresnel", fresnel_pass, 1);
-      pass_group.add_pass("sky", sky_pass, 2);
+      pass_group.add_pass("sky", sky_pass, 1);         // sky before the water so the water can blend over it
+      pass_group.add_pass("fresnel", fresnel_pass, 2); // transparent water + droplets render last
       pass_group.set_default_pass(default_pass_index);
 
       engine_log_debug("Forward Lighting pass has been created");

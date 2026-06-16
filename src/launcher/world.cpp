@@ -34,15 +34,15 @@ const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
 const float DROPLET_PARTICLE_FORCE = 0.0004f;
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
-const float DROPLET_PARTICLE_MIN_FRICTION = 0.8;
-const float DROPLET_PARTICLE_MAX_FRICTION = 2;
+const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
+const float DROPLET_PARTICLE_MAX_FRICTION = 0.9;
 const float DROPLET_MIN_FRICTION_FACTOR = 0.2f;
 const float DROPLET_MAX_FRICTION_FACTOR = 2.;
 const size_t DROPLET_INITIAL_LEAF = 0;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 3;
-const size_t DROPLET_GENERATION_INTERVAL = 10 * CLOCKS_PER_SEC;
+const size_t DROPLET_GENERATION_INTERVAL = 5 * CLOCKS_PER_SEC;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 30;
@@ -73,8 +73,8 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
-const float LIGHTS_MIN_INTENSITY = 0.7f;
-const float LIGHTS_MAX_INTENSITY = 0.9;
+const float LIGHTS_MIN_INTENSITY = 0.30f;
+const float LIGHTS_MAX_INTENSITY = 0.50;
 const float LIGHTS_MIN_RANGE = 2.5;
 const float LIGHTS_MAX_RANGE = 3.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
@@ -90,14 +90,22 @@ const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
 
-const float WATER_SURFACE_SIZE = GROUND_SIZE * 5;
-const float WATER_SURFACE_OFFSET = GROUND_OFFSET - 0.1;
+const float WATER_SURFACE_SIZE = GROUND_SIZE * 1.4f; // a pool covering the platform with a margin (was *5 -> too large for ripples to read)
+const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
+const float WATER_SURFACE_OFFSET = WATER_LEVEL;
 const size_t WATER_SURFACE_GRID_SIZE = 128;
+const float WATER_DEPTH = WATER_LEVEL - GROUND_OFFSET;  // depth of the pool over the platform (used to clamp wave troughs)
+const float WATER_HEIGHT_SCALE = 1.5f;               // gentle vertical displacement (large waves clipped through the platform)
+const float WATER_NORMAL_STEEPNESS = 22.0f;          // how strongly ripples perturb the surface normal (drives the reflection)
+const float WATER_SPLASH_STRENGTH = 0.12f;           // peak ripple amplitude injected when a droplet hits the water
+const int   WATER_SPLASH_RADIUS = 5;                 // radius (in grid cells) of the impact ring
+const float WATER_AMBIENT_SPLASH_CHANCE = 0.005f;    // per-frame probability of a faint random ripple (keeps the pool subtly alive)
+const float WATER_AMBIENT_SPLASH_STRENGTH = 0.025f;  // amplitude of those ambient ripples (very low)
 const char* WATER_SURFACE_MATERIAL_NAME = DROPLET_HULL_MATERIAL;
 
 const char* SKY_MATERIAL = "sky";
 const float SKY_RADIUS = 100.0f;
-const char* SKY_TEXTURE_PATH = "media/textures/sky.png";
+const char* SKY_TEXTURE_PATH = "media/textures/sky.jpg";
 
 //todo: remove motion states from rigid bodies
 
@@ -332,8 +340,8 @@ struct WaterSurface
     {
       for (size_t j=0; j<WATER_SURFACE_GRID_SIZE; j++, v++)
       {
-			  v->position  = math::vec3f(1.0f - 2.0f * i / float(WATER_SURFACE_GRID_SIZE), 0, 1.0f - 2.0f * j / float(WATER_SURFACE_GRID_SIZE));
-			  v->normal    = math::vec3f(0, 4.0f / float(WATER_SURFACE_GRID_SIZE), 0);
+          v->position  = math::vec3f(WATER_SURFACE_SIZE * (1.0f - 2.0f * i / float(WATER_SURFACE_GRID_SIZE)), 0, WATER_SURFACE_SIZE * (1.0f - 2.0f * j / float(WATER_SURFACE_GRID_SIZE)));
+          v->normal    = math::vec3f(0, 1, 0);
         v->color     = math::vec4f(1.0f);
         v->tex_coord = math::vec2f(j / float(WATER_SURFACE_GRID_SIZE), i / float(WATER_SURFACE_GRID_SIZE));
       }
@@ -363,48 +371,53 @@ struct WaterSurface
     mesh_node->set_mesh(mesh);
     mesh_node->set_environment_map_required(true);
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
-    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 2, WATER_SURFACE_SIZE));
+    mesh_node->set_scale(math::vec3f(1.0f)); // world scale is baked into the vertices, so the node stays uniform -> normals transform correctly
+  }
+
+  // Inject a ripple where a droplet hits the water. world_x/world_z are mapped back to the grid cell.
+  void splash(float world_x, float world_z, float strength)
+  {
+    int ci = int((1.0f - world_x / WATER_SURFACE_SIZE) * 0.5f * float(WATER_SURFACE_GRID_SIZE) + 0.5f);
+    int cj = int((1.0f - world_z / WATER_SURFACE_SIZE) * 0.5f * float(WATER_SURFACE_GRID_SIZE) + 0.5f);
+
+    const int R = WATER_SPLASH_RADIUS;
+    for (int di=-R; di<=R; di++)
+      for (int dj=-R; dj<=R; dj++)
+      {
+        int i = ci + di, j = cj + dj;
+        if (i < 1 || i >= int(WATER_SURFACE_GRID_SIZE) - 1 || j < 1 || j >= int(WATER_SURFACE_GRID_SIZE) - 1)
+          continue;
+        float falloff = 1.0f - float(di*di + dj*dj) / float(R*R + 1); // smooth, peak = strength at the center
+        if (falloff < 0.0f) continue;
+        n->U[i][j] -= falloff * strength; // a dip seeds an outward-propagating ring
+      }
   }
 
   void update()
   {
-      //add noise
+      //integrate the wave equation; ripples come from droplet impacts (splash()) plus an occasional faint random one
 
-    int i1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
-    int j1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
+    if (frand() < WATER_AMBIENT_SPLASH_CHANCE)
+      splash(crand() * WATER_SURFACE_SIZE * 0.85f, crand() * WATER_SURFACE_SIZE * 0.85f, WATER_AMBIENT_SPLASH_STRENGTH);
 
-    if (rand() % 50 ==0)
-    {
-      for(int i=-3; i<4; i++)
-      {
-        for(int j=-3; j<4; j++)
-        {
-          float v=6.0f-i*i-j*j;
+    const float MIN_HEIGHT = -(WATER_DEPTH - 0.15f); // keep wave troughs just above the submerged platform
 
-          if(v<0.0f)
-            v=0.0f;
-
-          n->U[i+i1+3][j+j1+3] -= v*0.004f;
-        }
-      }
-    }
-
-      //laplass pass
-
-    Vertex* v = mesh.vertices_data();
+    Vertex* verts = mesh.vertices_data();
 
     for (size_t i=1; i<WATER_SURFACE_GRID_SIZE-1; i++)
     {
-      for (size_t j=1; j<WATER_SURFACE_GRID_SIZE-1; j++, v++)
+      for (size_t j=1; j<WATER_SURFACE_GRID_SIZE-1; j++)
       {
-        v->position.y = n->U[i][j];
-        v->normal.x   = n->U[i-1][j]-n->U[i+1][j];
-        v->normal.y   = 4.0f / float(WATER_SURFACE_GRID_SIZE);
-        v->normal.z   = n->U[i][j-1]-n->U[i][j+1];
+        //grid cell (i,j) lives at vertex i*N+j (matching the constructor's row-major layout)
+        Vertex* v = &verts[i * WATER_SURFACE_GRID_SIZE + j];
+        float h = n->U[i][j] * WATER_HEIGHT_SCALE;
+        v->position.y = h < MIN_HEIGHT ? MIN_HEIGHT : h;
+        v->normal.x   = (n->U[i-1][j]-n->U[i+1][j]) * WATER_NORMAL_STEEPNESS;
+        v->normal.y   = 1.0f;
+        v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS;
         v->normal     = normalize(v->normal);
 
-        //constexpr float VIS = 0.005f;
-        constexpr float VIS = 0.075f;
+        constexpr float VIS = 0.030f; // lower viscosity -> ripples propagate further before settling
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
@@ -588,7 +601,18 @@ struct World::Impl: RigidBodyWorldCommonData
       //graphics
 
     scene::Mesh::Pointer floor = scene::Mesh::create();
-    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", GROUND_SIZE, 0.01f, GROUND_SIZE);
+
+    // the visible platform extends far past the physics ground so it reads as a plane reaching the horizon
+    const float FLOOR_VISUAL_SIZE = GROUND_SIZE * 6.0f;
+    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", FLOOR_VISUAL_SIZE, 0.01f, FLOOR_VISUAL_SIZE);
+
+    // tile the brick texture so it stays detailed across the enlarged platform instead of stretching
+    {
+      const float tiles = FLOOR_VISUAL_SIZE / GROUND_SIZE;
+      media::geometry::Vertex* fv = floor_mesh.vertices_data();
+      for (size_t i=0, c=floor_mesh.vertices_count(); i<c; i++, fv++)
+        fv->tex_coord *= tiles;
+    }
 
     floor->set_mesh(floor_mesh);
     floor->bind_to_parent(*scene_root);
@@ -986,6 +1010,11 @@ struct World::Impl: RigidBodyWorldCommonData
       particle->droplet_particle->fallen = true;
 
       fallen_droplet_particles_count++;
+
+        //a droplet reached the water surface -> seed a ripple at its (x,z)
+
+      const btVector3& impact = particle->body->getWorldTransform().getOrigin();
+      water_surface.splash(impact.getX(), impact.getZ(), WATER_SPLASH_STRENGTH);
     }
 
     droplet_particles.erase(std::remove_if(droplet_particles.begin(), droplet_particles.end(), [](const std::shared_ptr<PhysBodySync>& particle) {

@@ -120,6 +120,9 @@ class Mesh
     /// Update transaction ID
     size_t update_transaction_id() const;
 
+    /// Topology (indices/primitives) transaction ID - unchanged by a vertex-only touch()
+    size_t topology_transaction_id() const;
+
     /// Increment update transaction ID
     void touch();
 

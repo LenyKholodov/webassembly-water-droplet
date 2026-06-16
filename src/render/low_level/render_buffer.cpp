@@ -36,7 +36,7 @@ struct RenderBuffer::Impl
           gl_internal_format = GL_RGB16F;
           break;
         case PixelFormat_D24:
-          gl_internal_format = GL_DEPTH_COMPONENT;
+          gl_internal_format = GL_DEPTH_COMPONENT24; //sized format required for renderbuffer storage in GL ES 3.0 / WebGL2
           break;
         case PixelFormat_D16:
           gl_internal_format = GL_DEPTH_COMPONENT16;

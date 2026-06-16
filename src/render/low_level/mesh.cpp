@@ -15,6 +15,7 @@ struct Mesh::Impl
   PrimitiveArray primitives; //primitives
   MaterialList materials; //list of materials
   size_t update_transaction_id; //ID of the last mesh transaction
+  size_t topology_transaction_id; //ID of the last indices/primitives change
 
   Impl(const DeviceContextPtr& context, const media::geometry::Mesh& mesh, const MaterialList& materials)
     : context(context)
@@ -22,6 +23,7 @@ struct Mesh::Impl
     , index_buffer(context, mesh.indices_count())
     , materials(materials)
     , update_transaction_id(mesh.update_transaction_id())
+    , topology_transaction_id(mesh.topology_transaction_id())
   {
     primitives.reserve(mesh.primitives_count());
 
@@ -74,23 +76,32 @@ void Mesh::update_geometry(const media::geometry::Mesh& src_mesh)
     impl->vertex_buffer.resize(src_mesh.vertices_count());
   }
 
-  if (src_mesh.indices_count() > impl->index_buffer.indices_count())
-  {
-    impl->index_buffer.resize(src_mesh.indices_count());
-  }
-
   impl->vertex_buffer.set_data(0, src_mesh.vertices_count(), src_mesh.vertices_data());
-  impl->index_buffer.set_data(0, src_mesh.indices_count(), src_mesh.indices_data());
 
-  impl->primitives.clear();
-  impl->primitives.reserve(src_mesh.primitives_count());
-
-  for (uint32_t i=0, count=src_mesh.primitives_count(); i<count; i++)
+  // Indices and primitives only change when the topology changes. For vertex-only updates
+  // (e.g. the animated water surface, touched every frame) skip the index re-upload and the
+  // primitive rebuild entirely - that is the dominant per-frame cost for a 16k-vertex grid.
+  if (src_mesh.topology_transaction_id() != impl->topology_transaction_id)
   {
-    const media::geometry::Primitive& src_primitive = src_mesh.primitive(i);
-    Material material = impl->materials.get(src_primitive.material.c_str());
+    if (src_mesh.indices_count() > impl->index_buffer.indices_count())
+    {
+      impl->index_buffer.resize(src_mesh.indices_count());
+    }
 
-    impl->primitives.emplace_back(Primitive(material, src_primitive.type, impl->vertex_buffer, impl->index_buffer, src_primitive.first, src_primitive.count, src_primitive.base_vertex));
+    impl->index_buffer.set_data(0, src_mesh.indices_count(), src_mesh.indices_data());
+
+    impl->primitives.clear();
+    impl->primitives.reserve(src_mesh.primitives_count());
+
+    for (uint32_t i=0, count=src_mesh.primitives_count(); i<count; i++)
+    {
+      const media::geometry::Primitive& src_primitive = src_mesh.primitive(i);
+      Material material = impl->materials.get(src_primitive.material.c_str());
+
+      impl->primitives.emplace_back(Primitive(material, src_primitive.type, impl->vertex_buffer, impl->index_buffer, src_primitive.first, src_primitive.count, src_primitive.base_vertex));
+    }
+
+    impl->topology_transaction_id = src_mesh.topology_transaction_id();
   }
 
   impl->update_transaction_id = src_mesh.update_transaction_id();

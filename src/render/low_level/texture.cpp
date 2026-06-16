@@ -85,14 +85,14 @@ struct Texture::Impl
         gl_uncompressed_type = GL_FLOAT;
         break;
       case PixelFormat_D24:
-        gl_internal_format = GL_DEPTH_COMPONENT;
+        gl_internal_format = GL_DEPTH_COMPONENT24; //sized format required for an attachable/renderable depth texture in GL ES 3.0 / WebGL2
         gl_uncompressed_format = GL_DEPTH_COMPONENT;
-        gl_uncompressed_type = GL_UNSIGNED_INT;      
+        gl_uncompressed_type = GL_UNSIGNED_INT;
         break;
       case PixelFormat_D16:
         gl_internal_format = GL_DEPTH_COMPONENT16;
-        gl_uncompressed_format = GL_DEPTH_COMPONENT16;
-        gl_uncompressed_type = GL_UNSIGNED_INT;      
+        gl_uncompressed_format = GL_DEPTH_COMPONENT;
+        gl_uncompressed_type = GL_UNSIGNED_SHORT;
         break;
       default:
         throw Exception::format("Invalid texture pixel format %d", format);
@@ -216,7 +216,18 @@ struct Texture::Impl
 
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER, convert_filter(min_filter));
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, convert_filter(mag_filter));
-    
+
+    if (target == GL_TEXTURE_CUBE_MAP)
+    {
+      //cubemaps (skybox, env maps) must clamp to edge; the default GL_REPEAT
+      //wraps across face boundaries under linear filtering and produces visible seams
+      glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#ifndef __EMSCRIPTEN__
+      glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+#endif
+    }
+
     need_reapply_sampler = false;
   }
 };

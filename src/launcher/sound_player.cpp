@@ -74,6 +74,8 @@ struct SoundPlayer::Impl
 
   void play_music(bool force)
   {
+    return; // music disabled for now
+
     if (music_playing && !force)
       return;
 
