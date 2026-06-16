@@ -444,7 +444,7 @@ struct WaterSurface
         v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS;
         v->normal     = normalize(v->normal);
 
-        constexpr float VIS = 0.060f; // higher viscosity -> smoother, more graceful water motion
+        constexpr float VIS = 0.110f; // higher viscosity -> droplet ripples attenuate (fade) faster
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
