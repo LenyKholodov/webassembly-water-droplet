@@ -21,8 +21,8 @@ varying vec3 refractionDir;
 varying vec3 reflectionDir;
 varying float fresnel;
 
-const float eta = 0.75; // air -> water refraction ratio (~1/1.33), so refraction bends instead of looking straight through
-//const float eta = 0.0;
+const float eta = 0.0;
+//const float eta = 0.75;
 //const float eta = 0.05;
 const float fresnelPower = 5.0;
 //const float F = 0.05;
@@ -97,58 +97,37 @@ vec3 ComputeDiffuseColor(const in vec3 normal, const in vec3 lightDir, const in 
 const float envFactor = 0.85;
 //const float envFactor = 0.15;
 
-// Blinn-Phong specular from the scene point lights. Ripples break these glints into moving
-// highlights, which is what makes the waves read on the dark night-time water surface.
-const float WATER_SHININESS = 60.0;
-const float WATER_SPECULAR_AMOUNT = 1.3;
-
-// faint cool ambient so the night water reads as deep blue rather than pure black
-const vec3 WATER_AMBIENT = vec3(0.03, 0.045, 0.07);
-
 void main()
 {
   vec3 position = position.xyz;
   vec4 diffuseColor = texture(diffuseTexture, texCoord);
-
-  vec3 normal = normalize(normal.xyz);
-  vec3 eyeDirection = normalize(worldViewPosition - position);
-
-  // Depth-based water: distance the view ray travels through the water before reaching the
-  // platform plane. Deeper (grazing angle, or deep water) -> more reflection, less refraction,
-  // less transparent. With a flat platform this also gives the correct angle dependence.
-  const float PLATFORM_Y = -7.0;   // matches GROUND_OFFSET
-  const float DEPTH_SCALE = 7.0;   // view-path length at which the water is fully reflective/opaque (larger = clearer for longer)
-  float viewDepth = (position.y - PLATFORM_Y) / max(abs(eyeDirection.y), 0.06);
-  float depthFactor = clamp(viewDepth / DEPTH_SCALE, 0.0, 1.0);
-  float reflectivity = max(fresnel, depthFactor);
 
   vec3 reflectDir   = normalize(reflectionDir);
   vec3 reflectColor = textureCube(environmentMap, reflectDir).xyz;
   vec3 refractDir   = normalize(refractionDir);
   vec3 refractColor = textureCube(environmentMap, refractDir).xyz;
 
-  vec3 resultColor  = mix(refractColor, reflectColor, reflectivity);
+  vec3 resultColor  = mix(refractColor, reflectColor, fresnel);
 
+  vec3 normal = normalize(normal.xyz);
+  vec3 eyeDirection = normalize(worldViewPosition - position);
+  
   vec3 color = vec3(0.0);
-  vec3 specular = vec3(0.0);
 
   for (int i = 0; i < MAX_POINT_LIGHTS; ++i)
-  {
+  {  
     vec3 lightPosition = pointLightPositions[i];
     vec3 lightColor = pointLightColors[i];
     vec3 lightAttenuation = pointLightAttenuations[i];
     float lightRange = pointLightRanges[i];
 
     float distance = length(lightPosition - position);
-    float attenuation = min(1.0, lightRange / (lightAttenuation.x + lightAttenuation.y * distance + lightAttenuation.z * (distance * distance)));
+    float attenuation = min(1.0, lightRange / (lightAttenuation.x + lightAttenuation.y * distance + lightAttenuation.z * (distance * distance))); 
     vec3 lightDirection = normalize(lightPosition - position);
-
+    
     vec3 diffuseColor = ComputeDiffuseColor(normal, lightDirection, diffuseColor.xyz) * DIFFUSE_AMOUNT;
 
     color += lightColor * attenuation * diffuseColor;
-
-    vec3 halfVec = normalize(lightDirection + eyeDirection);
-    specular += lightColor * attenuation * pow(max(dot(normal, halfVec), 0.0), WATER_SHININESS);
   }
 
   for (int i = 0; i < MAX_SPOT_LIGHTS; ++i)
@@ -177,13 +156,6 @@ void main()
     }
   }
   
-  // Transparency: shallow / face-on water is see-through (the submerged platform shows); deep or
-  // grazing water becomes an opaque reflection. Driven by the same depth-based reflectivity.
-  const float MIN_ALPHA = 0.35;
-  float alpha = mix(MIN_ALPHA, 1.0, reflectivity);
-  vec3 surface = mix(color, resultColor, envFactor) + specular * WATER_SPECULAR_AMOUNT + WATER_AMBIENT;
-  // bright glints also read as opaque so they stand out over the transparent water
-  alpha = clamp(alpha + dot(specular, vec3(0.33)) * WATER_SPECULAR_AMOUNT, 0.0, 1.0);
-  outColor = vec4(surface, alpha);
+  outColor = vec4(mix(color, resultColor, envFactor), 1.0);
   //outColor = vec4(normalize(normal), 1.0);
 }

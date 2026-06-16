@@ -17,6 +17,7 @@ namespace passes {
 static const char* FORWARD_LIGHTING_PROGRAM_FILE = "media/shaders/forward_lighting.glsl";
 static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
 static const char* SKY_PROGRAM_FILE = "media/shaders/sky.glsl";
+static const char* WATER_PROGRAM_FILE = "media/shaders/water.glsl";
 
 ///
 /// Forward lighting pass
@@ -29,26 +30,32 @@ struct ForwardLightingPass : IScenePass
       : forward_lighting_program(device.create_program_from_file(FORWARD_LIGHTING_PROGRAM_FILE))
       , fresnel_program(device.create_program_from_file(FRESNEL_PROGRAM_FILE))
       , sky_program(device.create_program_from_file(SKY_PROGRAM_FILE))
+      , water_program(device.create_program_from_file(WATER_PROGRAM_FILE))
       , forward_lighting_pass(device.create_pass(forward_lighting_program))
       , fresnel_pass(device.create_pass(fresnel_program))
       , sky_pass(device.create_pass(sky_program))
+      , water_pass(device.create_pass(water_program))
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
 
-      // water + droplets (the "fresnel" material) are semi-transparent: render them AFTER the
-      // opaque scene and the sky, with alpha blending and depth-write off, so the submerged
-      // platform shows through and ripples read against it.
-      fresnel_pass.set_depth_stencil_state(DepthStencilState(true, false, CompareMode_Less));
-      fresnel_pass.set_blend_state(BlendState(true, BlendArgument_SourceAlpha, BlendArgument_InverseSourceAlpha));
+      // droplets (the "fresnel" material) are opaque and reflect the scene env-map (original look)
+      fresnel_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
       fresnel_pass.set_clear_flags(Clear_None);
 
       sky_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
       sky_pass.set_rasterizer_state(RasterizerState(false));
       sky_pass.set_clear_flags(Clear_None);
 
+      // dedicated transparent pass for the water surface: renders LAST (after opaque + droplets + sky),
+      // alpha-blended with depth-write off, so the submerged platform shows through and it blends over the sky.
+      water_pass.set_depth_stencil_state(DepthStencilState(true, false, CompareMode_Less));
+      water_pass.set_blend_state(BlendState(true, BlendArgument_SourceAlpha, BlendArgument_InverseSourceAlpha));
+      water_pass.set_clear_flags(Clear_None);
+
       size_t default_pass_index = pass_group.add_pass(nullptr, forward_lighting_pass, 0);
-      pass_group.add_pass("sky", sky_pass, 1);         // sky before the water so the water can blend over it
-      pass_group.add_pass("fresnel", fresnel_pass, 2); // transparent water + droplets render last
+      pass_group.add_pass("fresnel", fresnel_pass, 1); // opaque droplets
+      pass_group.add_pass("sky", sky_pass, 2);         // sky fills the background
+      pass_group.add_pass("water", water_pass, 3);     // transparent water blends over everything
       pass_group.set_default_pass(default_pass_index);
 
       engine_log_debug("Forward Lighting pass has been created");
@@ -84,12 +91,14 @@ struct ForwardLightingPass : IScenePass
       forward_lighting_pass.set_clear_color(context.clear_color());
       fresnel_pass.set_frame_buffer(context.default_frame_buffer());
       sky_pass.set_frame_buffer(context.default_frame_buffer());
+      water_pass.set_frame_buffer(context.default_frame_buffer());
 
         //clean pass
 
       forward_lighting_pass.remove_all_primitives();
       fresnel_pass.remove_all_primitives();
       sky_pass.remove_all_primitives();
+      water_pass.remove_all_primitives();
 
         //traverse scene
 
@@ -292,9 +301,11 @@ struct ForwardLightingPass : IScenePass
     Program forward_lighting_program;
     Program fresnel_program;
     Program sky_program;
+    Program water_program;
     Pass forward_lighting_pass;
     Pass fresnel_pass;
     Pass sky_pass;
+    Pass water_pass;
     PassGroup pass_group;
     FrameNode frame;    
     SceneVisitor visitor;

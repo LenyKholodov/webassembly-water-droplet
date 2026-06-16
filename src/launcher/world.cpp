@@ -73,8 +73,8 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
-const float LIGHTS_MIN_INTENSITY = 0.30f;
-const float LIGHTS_MAX_INTENSITY = 0.50;
+const float LIGHTS_MIN_INTENSITY = 0.16f;
+const float LIGHTS_MAX_INTENSITY = 0.28;
 const float LIGHTS_MIN_RANGE = 2.5;
 const float LIGHTS_MAX_RANGE = 3.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
@@ -101,7 +101,7 @@ const float WATER_SPLASH_STRENGTH = 0.12f;           // peak ripple amplitude in
 const int   WATER_SPLASH_RADIUS = 5;                 // radius (in grid cells) of the impact ring
 const float WATER_AMBIENT_SPLASH_CHANCE = 0.005f;    // per-frame probability of a faint random ripple (keeps the pool subtly alive)
 const float WATER_AMBIENT_SPLASH_STRENGTH = 0.025f;  // amplitude of those ambient ripples (very low)
-const char* WATER_SURFACE_MATERIAL_NAME = DROPLET_HULL_MATERIAL;
+const char* WATER_SURFACE_MATERIAL_NAME = "water";
 
 const char* SKY_MATERIAL = "sky";
 const float SKY_RADIUS = 100.0f;
@@ -369,7 +369,7 @@ struct WaterSurface
     mesh_node = scene::Mesh::create();
 
     mesh_node->set_mesh(mesh);
-    mesh_node->set_environment_map_required(true);
+    // no scene env-map: the "water" material reflects the static sky cubemap directly (correct on a flat plane, and cheaper)
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
     mesh_node->set_scale(math::vec3f(1.0f)); // world scale is baked into the vertices, so the node stays uniform -> normals transform correctly
   }
@@ -463,6 +463,7 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
   Material sky_material;
+  Material water_material;
   std::vector<std::shared_ptr<Plant>> plants;
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
@@ -515,8 +516,14 @@ struct World::Impl: RigidBodyWorldCommonData
 
     sky_material.set_shader_tags("sky");
 
+    // the water surface reflects the sky cubemap directly (no scene env-map -> no parallax smearing on the flat plane)
+    water_material.set_shader_tags("water");
+    TextureList water_textures = water_material.textures();
+    water_textures.insert("skyTexture", sky_texture);
+
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
     materials.insert(SKY_MATERIAL, sky_material);
+    materials.insert(WATER_SURFACE_MATERIAL_NAME, water_material);
 
       //scale meshes
 
