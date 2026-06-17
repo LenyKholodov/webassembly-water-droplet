@@ -25,7 +25,7 @@ approaches (do one or the other, not both).
 | **P1** | [B7](#b7) | Normal matrix for non-uniform scale | High | M | — | benefits [M2](#m2) |
 | **P1** | [O1](#o1) | Skip invisible per-particle scene meshes — ✅ **DONE** | Med | S | [B2](#b2) | — |
 | **P2** | [O5](#o5) | Incremental centroid (O(n²)→O(n)) | Low | S | — | pairs with [B1](#b1) |
-| **P2** | [O2](#o2) | Stream water VBO (dynamic, y+normal only) | Med | M | [B3](#b3) | superseded-by GPU path in [M5](#m5) |
+| **P2** | [O2](#o2) | Stream water VBO (dynamic, y+normal only) — ✅ **DONE** (core) | Med | M | [B3](#b3) | superseded-by GPU path in [M5](#m5) |
 | **P2** | [O3](#o3) | Throttle/​shrink droplet env-map cubemaps | Med | M | — | — |
 | **P2** | [O4](#o4) | Cache/throttle hull rebuild; drop redundant work | Med | S | [B5](#b5) | superseded-by [M2](#m2) |
 | **P2** | [O7](#o7) | Micro-cleanups (RNG, ring buffer, hasher) | Nit | S | — | — |
@@ -180,10 +180,11 @@ graph LR
 - **Fix:** when `DROPLET_DEBUG_DRAW` is false, skip per-particle `scene::Mesh` creation and exclude particles from the sync loop — they're never rendered.
 
 <a id="o2"></a>
-### O2 — Stream the water buffer instead of full re-upload
+### O2 — Stream the water buffer instead of full re-upload  ·  ✅ DONE (core)
 - **Loc:** `touch()` [world.cpp:424](../src/launcher/world.cpp#L424), [mesh.cpp:67-97](../src/render/low_level/mesh.cpp#L67-L97), [buffer.cpp:38](../src/render/low_level/buffer.cpp#L38) · **Sev:** Med · **Effort:** M · **Depends:** [B3](#b3)
-- **Why:** the full 16 384-vertex VBO **and** the static index buffer are re-uploaded every frame (~975 KB/frame) as `GL_STATIC_DRAW`.
-- **Fix:** upload indices/UVs/colors once; mark dynamic buffers `GL_DYNAMIC_DRAW`; stream only y + normal; consider 64² grid; skip the per-cell `normalize()` (let the shader normalize). Superseded by a GPU height-field ([M5](#m5)).
+- **Why:** the full 16 384-vertex VBO **and** the static index buffer were re-uploaded every frame (~975 KB/frame) as `GL_STATIC_DRAW`.
+- **Done:** index/primitive re-upload is skipped when topology is unchanged (B3-era); the vertex buffer auto-promotes to `GL_DYNAMIC_DRAW` the first frame it's streamed (via `update_geometry` → `VertexBuffer::ensure_dynamic`), so the driver stops stalling on each per-frame `glBufferSubData`; dropped the redundant per-cell `normalize()` (shader normalizes).
+- **Deferred:** streaming only y+normal (uploading static x/z/UV/colour once) needs a split vertex format / second VBO — left for the GPU height-field path ([M5](#m5)) that supersedes this. 64² grid not changed (would coarsen the tuned swell).
 
 <a id="o3"></a>
 ### O3 — Throttle / shrink droplet environment cubemaps

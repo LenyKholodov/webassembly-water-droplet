@@ -76,6 +76,11 @@ void Mesh::update_geometry(const media::geometry::Mesh& src_mesh)
     impl->vertex_buffer.resize(src_mesh.vertices_count());
   }
 
+  // reaching here means the geometry actually changed since the last frame (static meshes early-return
+  // above), so promote the buffer to DYNAMIC_DRAW once — the driver then stops stalling on the
+  // per-frame re-upload of the animated surface (the water grid's dominant per-frame cost).
+  impl->vertex_buffer.ensure_dynamic();
+
   impl->vertex_buffer.set_data(0, src_mesh.vertices_count(), src_mesh.vertices_data());
 
   // Indices and primitives only change when the topology changes. For vertex-only updates

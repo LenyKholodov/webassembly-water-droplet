@@ -483,7 +483,8 @@ struct WaterSurface
         v->normal.x   = (n->U[i-1][j]-n->U[i+1][j]) * WATER_NORMAL_STEEPNESS + (Sim - Sip) * WATER_SWELL_STEEPNESS;
         v->normal.y   = 1.0f;
         v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS + (Sjm - Sjp) * WATER_SWELL_STEEPNESS;
-        v->normal     = normalize(v->normal);
+        // no CPU normalize: the water shader normalizes worldNormal, and the node scale is uniform, so
+        // direction is preserved -> save ~25k sqrt/frame
 
         constexpr float VIS = 0.110f; // higher viscosity -> droplet ripples attenuate (fade) faster
 

@@ -11,6 +11,7 @@ struct engine::render::low_level::BufferImpl
   size_t element_size; //size of one element
   GLenum target; //buffer target
   GLuint vbo_id; //vertex buffer object
+  GLenum usage; //GL usage hint (GL_STATIC_DRAW by default; switched to GL_DYNAMIC_DRAW for streamed buffers)
 
   BufferImpl(const DeviceContextPtr& context, GLenum target, size_t count, size_t element_size)
     : context(context)
@@ -18,6 +19,7 @@ struct engine::render::low_level::BufferImpl
     , element_size(element_size)
     , target(target)
     , vbo_id()
+    , usage(GL_STATIC_DRAW)
   {
     engine_check(context);
 
@@ -35,9 +37,7 @@ struct engine::render::low_level::BufferImpl
 
       //allocate buffer
 
-    const GLenum usage_mode = GL_STATIC_DRAW; //TODO: add as parameter
-
-    glBufferData(target, count * element_size, nullptr, usage_mode); 
+    glBufferData(target, count * element_size, nullptr, usage);
 
     context->check_errors();
   }
@@ -66,6 +66,23 @@ struct engine::render::low_level::BufferImpl
     context->check_errors();
   }
 
+  // Switch the buffer's GL usage hint (re-allocates/orphans the store). Used to promote a
+  // per-frame-streamed buffer (e.g. the animated water surface) from STATIC_DRAW to DYNAMIC_DRAW
+  // so the driver double-buffers it instead of stalling on every glBufferSubData.
+  void set_usage(GLenum new_usage)
+  {
+    if (usage == new_usage)
+      return;
+
+    bind();
+
+    glBufferData(target, count * element_size, nullptr, new_usage);
+
+    context->check_errors();
+
+    usage = new_usage;
+  }
+
   void bind()
   {
     context->make_current();
@@ -84,11 +101,9 @@ struct engine::render::low_level::BufferImpl
 
     glBindBuffer(target, vbo_id);
 
-    const GLenum usage_mode = GL_STATIC_DRAW; //TODO: add as parameter
-
     engine_log_debug("resize buffer %u -> %u; elsize=%u", count, new_count, element_size);
 
-    glBufferData(target, new_count * element_size, nullptr, usage_mode); 
+    glBufferData(target, new_count * element_size, nullptr, usage); // keep whatever usage hint was set (static or dynamic)
 
     context->check_errors();
 
@@ -123,6 +138,11 @@ void VertexBuffer::bind() const
 void VertexBuffer::resize(size_t new_count)
 {
   impl->resize(new_count);
+}
+
+void VertexBuffer::ensure_dynamic()
+{
+  impl->set_usage(GL_DYNAMIC_DRAW);
 }
 
 ///
