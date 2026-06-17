@@ -96,12 +96,23 @@ const float WATER_SURFACE_OFFSET = WATER_LEVEL;
 const size_t WATER_SURFACE_GRID_SIZE = 160;          // a bit denser so ripples stay smooth on the larger plane
 const float WATER_DEPTH = WATER_LEVEL - GROUND_OFFSET;  // depth of the pool over the platform (used to clamp wave troughs)
 const float WATER_HEIGHT_SCALE = 0.5f;               // small vertical displacement -> gentle ripples, no platform clipping
-const float WATER_NORMAL_STEEPNESS = 26.0f;          // how strongly ripples perturb the surface normal (drives the reflection)
-const float WATER_SPLASH_STRENGTH = 0.05f;           // gentle droplet impact -> a beautiful spreading wave, not a big disturbance
-const int   WATER_SPLASH_RADIUS = 5;                 // radius (in grid cells) of the impact ring
-const float WATER_AMBIENT_SPLASH_CHANCE = 0.06f;     // frequent but...
-const float WATER_AMBIENT_SPLASH_STRENGTH = 0.006f;  // ...tiny random ripples, like wind on water
+const float WATER_NORMAL_STEEPNESS = 14.0f;          // how strongly droplet ripples perturb the normal (lowered -> lighter, softer chop)
+const float WATER_SPLASH_STRENGTH = 0.001f;          // per-particle droplet impact (a droplet = many particles, so they accumulate)
+const float WATER_SPLASH_MAX_DIP = 0.015f;            // cap the per-droplet dip -> a small, clearly-visible impact ring (well below the ~0.08 swell)
+const int   WATER_SPLASH_RADIUS = 1;                 // radius (in grid cells, ~3 world units each) of the impact ring -> a tiny, pin-point footprint (1 cell is the grid floor)
+const float WATER_AMBIENT_SPLASH_CHANCE = 0.05f;     // frequent but...
+const float WATER_AMBIENT_SPLASH_STRENGTH = 0.004f;  // ...tiny random ripples, like wind on water
 const float WATER_WAVE_SPEED = 0.25f;                // <1 slows wave propagation -> calm, relaxing water
+
+  //a permanent, always-animating swell layered under the droplet ripples so the surface always reads as living water
+const float WATER_SWELL_AMP1   = 0.05f;              // height of the primary swell (world units)
+const float WATER_SWELL_LEN1   = 15.0f;              // wavelength of the primary swell (world units)
+const float WATER_SWELL_SPEED1 = 1.1f;              // angular speed of the primary swell
+const float WATER_SWELL_AMP2   = 0.028f;             // secondary cross-swell, breaks up the regularity
+const float WATER_SWELL_LEN2   = 9.0f;
+const float WATER_SWELL_SPEED2 = 1.7f;
+const float WATER_SWELL_STEEPNESS = 2.2f;            // how strongly the swell tilts the normal (drives the gentle moving reflection)
+const float WATER_SWELL_TIME_STEP = 0.016f;          // swell clock advance per update (~one frame)
 const char* WATER_SURFACE_MATERIAL_NAME = "water";
 
 const char* SKY_MATERIAL = "sky";
@@ -350,6 +361,16 @@ struct WaterSurface
   Field* n;
   media::geometry::Mesh mesh;
   scene::Mesh::Pointer mesh_node;
+  float swell_time = 0.0f; // clock for the permanent procedural swell
+
+  // Permanent swell height at world (wx,wz): two slow crossing traveling waves -> a gentle, never-still surface
+  static float swell_height(float wx, float wz, float t)
+  {
+    const float k1 = 6.2831853f / WATER_SWELL_LEN1;
+    const float k2 = 6.2831853f / WATER_SWELL_LEN2;
+    return WATER_SWELL_AMP1 * sinf(wx * k1 + t * WATER_SWELL_SPEED1)
+         + WATER_SWELL_AMP2 * sinf((wx * 0.7f + wz * 0.7f) * k2 + t * WATER_SWELL_SPEED2);
+  }
 
   WaterSurface()
   {
@@ -396,7 +417,7 @@ struct WaterSurface
     mesh_node = scene::Mesh::create();
 
     mesh_node->set_mesh(mesh);
-    // no scene env-map: the "water" material reflects the static sky cubemap directly (correct on a flat plane, and cheaper)
+    mesh_node->set_planar_reflection_required(true); // flat mirror: planar reflection + refraction render targets
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
     mesh_node->set_scale(math::vec3f(1.0f)); // world scale is baked into the vertices, so the node stays uniform -> normals transform correctly
   }
@@ -416,7 +437,9 @@ struct WaterSurface
           continue;
         float falloff = 1.0f - float(di*di + dj*dj) / float(R*R + 1); // smooth, peak = strength at the center
         if (falloff < 0.0f) continue;
-        n->U[i][j] -= falloff * strength; // a dip seeds an outward-propagating ring
+        float& u = n->U[i][j];
+        u -= falloff * strength;                              // a dip seeds an outward-propagating ring
+        if (u < -WATER_SPLASH_MAX_DIP) u = -WATER_SPLASH_MAX_DIP; // ...but overlapping impacts of one droplet's particles can't dig a deep crater
       }
   }
 
@@ -427,7 +450,10 @@ struct WaterSurface
     if (frand() < WATER_AMBIENT_SPLASH_CHANCE)
       splash(crand() * WATER_SURFACE_SIZE * 0.85f, crand() * WATER_SURFACE_SIZE * 0.85f, WATER_AMBIENT_SPLASH_STRENGTH);
 
+    swell_time += WATER_SWELL_TIME_STEP; // advance the permanent swell
+
     const float MIN_HEIGHT = -(WATER_DEPTH - 0.15f); // keep wave troughs just above the submerged platform
+    const float CELL = 2.0f * WATER_SURFACE_SIZE / float(WATER_SURFACE_GRID_SIZE); // world distance between adjacent grid cells
 
     Vertex* verts = mesh.vertices_data();
 
@@ -437,11 +463,20 @@ struct WaterSurface
       {
         //grid cell (i,j) lives at vertex i*N+j (matching the constructor's row-major layout)
         Vertex* v = &verts[i * WATER_SURFACE_GRID_SIZE + j];
-        float h = n->U[i][j] * WATER_HEIGHT_SCALE;
+
+        //permanent swell: sample height + neighbours (x decreases as i grows, z decreases as j grows -> matches the splash differences below)
+        float wx = v->position.x, wz = v->position.z;
+        float S   = swell_height(wx, wz, swell_time);
+        float Sim = swell_height(wx + CELL, wz, swell_time); // i-1
+        float Sip = swell_height(wx - CELL, wz, swell_time); // i+1
+        float Sjm = swell_height(wx, wz + CELL, swell_time); // j-1
+        float Sjp = swell_height(wx, wz - CELL, swell_time); // j+1
+
+        float h = n->U[i][j] * WATER_HEIGHT_SCALE + S;
         v->position.y = h < MIN_HEIGHT ? MIN_HEIGHT : h;
-        v->normal.x   = (n->U[i-1][j]-n->U[i+1][j]) * WATER_NORMAL_STEEPNESS;
+        v->normal.x   = (n->U[i-1][j]-n->U[i+1][j]) * WATER_NORMAL_STEEPNESS + (Sim - Sip) * WATER_SWELL_STEEPNESS;
         v->normal.y   = 1.0f;
-        v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS;
+        v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS + (Sjm - Sjp) * WATER_SWELL_STEEPNESS;
         v->normal     = normalize(v->normal);
 
         constexpr float VIS = 0.110f; // higher viscosity -> droplet ripples attenuate (fade) faster
@@ -724,6 +759,7 @@ struct World::Impl: RigidBodyWorldCommonData
     }
 
     floor->set_mesh(floor_mesh);
+    floor->set_reflection_excluded(true); // submerged platform must not occlude the mirror camera in the water reflection
     floor->bind_to_parent(*scene_root);
 
       //physics

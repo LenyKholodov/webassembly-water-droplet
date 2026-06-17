@@ -403,6 +403,7 @@ int main(void)
       {
         scene_renderer.add_pass("Forward Lighting");
         scene_renderer.add_pass("Mirrors");
+        scene_renderer.add_pass("Water Reflection");
         //scene_renderer.add_pass("LPP-GeometryPass");
         //scene_renderer.add_pass("Deferred Lighting");
         //scene_renderer.add_pass("Projectile Maps Rendering");

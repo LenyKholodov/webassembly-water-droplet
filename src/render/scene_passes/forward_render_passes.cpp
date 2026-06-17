@@ -40,6 +40,10 @@ struct ForwardLightingPass : IScenePass
       , firefly_pass(device.create_pass(firefly_program))
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+      // no back-face culling: the planar water-reflection render mirrors the scene (flips winding),
+      // and opaque geometry is depth-tested so rendering both faces looks identical.
+      forward_lighting_pass.set_rasterizer_state(RasterizerState(false));
+      fresnel_pass.set_rasterizer_state(RasterizerState(false));
 
       // droplets (the "fresnel" material) are opaque and reflect the scene env-map (original look)
       fresnel_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
@@ -156,14 +160,18 @@ struct ForwardLightingPass : IScenePass
 
       RenderableMesh* renderable_mesh = RenderableMesh::get(mesh.mesh(), context);
 
-        //check for envmap
+        //check for envmap (droplets) or planar reflection/refraction targets (water)
 
-      EnvironmentMap* envmap = EnvironmentMap::find(mesh);
+      EnvironmentMap*  envmap   = EnvironmentMap::find(mesh);
+      WaterReflection* water_rt = WaterReflection::find(mesh);
+
+      TextureList prim_textures = envmap ? envmap->textures
+                                : (water_rt ? water_rt->textures : Pass::default_primitive_textures());
 
         //add mesh to pass
 
       pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count(), Pass::default_primitive_properties(),
-        envmap ? envmap->textures : Pass::default_primitive_textures());
+        prim_textures);
     }
 
     void setup_point_lights(const PointLightArray& lights, ScenePassContext& context)

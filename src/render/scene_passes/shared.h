@@ -142,6 +142,58 @@ struct EnvironmentMap
   }
 };
 
+/// Planar water reflection + refraction render targets (for a flat mirror surface)
+struct WaterReflection
+{
+  low_level::Texture reflection_texture;
+  low_level::Texture refraction_texture;
+  low_level::RenderBuffer depth_render_buffer;
+  low_level::FrameBuffer reflection_frame_buffer;
+  low_level::FrameBuffer refraction_frame_buffer;
+  low_level::TextureList textures;
+  size_t width;
+  size_t height;
+
+  WaterReflection(engine::render::low_level::Device& device, size_t w, size_t h)
+    : reflection_texture(device.create_texture2d(w, h, low_level::PixelFormat_RGBA8, 1))
+    , refraction_texture(device.create_texture2d(w, h, low_level::PixelFormat_RGBA8, 1))
+    , depth_render_buffer(device.create_render_buffer(w, h, low_level::PixelFormat_D16))
+    , reflection_frame_buffer(device.create_frame_buffer())
+    , refraction_frame_buffer(device.create_frame_buffer())
+    , width(w)
+    , height(h)
+  {
+    reflection_texture.set_min_filter(low_level::TextureFilter_Linear);
+    reflection_texture.set_mag_filter(low_level::TextureFilter_Linear);
+    refraction_texture.set_min_filter(low_level::TextureFilter_Linear);
+    refraction_texture.set_mag_filter(low_level::TextureFilter_Linear);
+
+    reflection_frame_buffer.attach_color_target(reflection_texture);
+    reflection_frame_buffer.attach_depth_buffer(depth_render_buffer);
+
+    refraction_frame_buffer.attach_color_target(refraction_texture);
+    refraction_frame_buffer.attach_depth_buffer(depth_render_buffer);
+
+    textures.insert("reflectionTexture", reflection_texture);
+    textures.insert("refractionTexture", refraction_texture);
+  }
+
+  static WaterReflection* find(engine::scene::Entity& entity)
+  {
+    return entity.find_user_data<WaterReflection>();
+  }
+
+  static WaterReflection* get(engine::scene::Entity& entity, ScenePassContext& context, size_t w, size_t h)
+  {
+    WaterReflection* wr = entity.find_user_data<WaterReflection>();
+
+    if (!wr)
+      wr = &entity.set_user_data(WaterReflection(context.device(), w, h));
+
+    return wr;
+  }
+};
+
 /// Projectile render data
 struct RenderableProjectile
 {

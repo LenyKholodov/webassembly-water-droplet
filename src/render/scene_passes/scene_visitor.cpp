@@ -115,7 +115,7 @@ void SceneVisitor::visit(engine::scene::Entity& node)
   if (impl->is_excluded(node))
     return;
 
-  if (node.is_environment_map_required())
+  if (node.is_environment_map_required() || node.is_planar_reflection_required())
     impl->prerender_entities.push_back(engine::scene::Entity::Pointer(node.shared_from_this(), &node));
 }
 
