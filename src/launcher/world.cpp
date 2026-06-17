@@ -1146,10 +1146,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
       fallen_droplet_particles_count++;
 
-        //a droplet reached the water surface -> seed a ripple at its (x,z)
-
-      const btVector3& impact = particle->body->getWorldTransform().getOrigin();
-      water_surface.splash(impact.getX(), impact.getZ(), WATER_SPLASH_STRENGTH);
+        //a droplet reaching the water surface no longer disturbs it (no impact ripple)
     }
 
     droplet_particles.erase(std::remove_if(droplet_particles.begin(), droplet_particles.end(), [](const std::shared_ptr<PhysBodySync>& particle) {
