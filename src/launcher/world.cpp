@@ -31,7 +31,8 @@ const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.0004f;
+const float DROPLET_PARTICLE_FORCE = 0.02f;    // centroid spring (raised: B1 removed the accidental Nx force multiplier, so the real value must bind on its own)
+const float DROPLET_PARTICLE_DAMPING = 0.008f; // velocity damping so the stronger spring doesn't oscillate/jitter
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
@@ -192,7 +193,8 @@ struct PhysBodySync
     int collision_group,
     int collision_mask,
     const std::shared_ptr<btDiscreteDynamicsWorld>& dynamics_world)
-    : mesh(mesh)
+    : dynamics_world(dynamics_world) // was never stored -> the destructor dereferenced a null world (latent until bodies were actually destroyed)
+    , mesh(mesh)
     , shape(shape)
   {
     btTransform start_transform;
@@ -312,6 +314,10 @@ bool contact_added_callback (btManifoldPoint& contact_point,
   //We use only btRigidBody for collision objects, so safe to use static_cast here
   RigidBodyInfo *body0_info = (RigidBodyInfo*)object0->m_collisionObject->getUserPointer (),
                 *body1_info = (RigidBodyInfo*)object1->m_collisionObject->getUserPointer ();
+
+  //a body without RigidBodyInfo (e.g. a pure constraint anchor) must never be dereferenced
+  if (!body0_info || !body1_info)
+    return false;
 
   if (body0_info->collision_group != COLLISION_GROUP_LEAF && body1_info->collision_group != COLLISION_GROUP_LEAF)
   {
@@ -941,7 +947,9 @@ struct World::Impl: RigidBodyWorldCommonData
         rb_info.m_startWorldTransform = start_transform;
         leaf.static_bind_body = std::make_shared<btRigidBody>(rb_info);
 
-        dynamics_world->addRigidBody(leaf.static_bind_body.get());
+        //pure constraint anchor: give it no user pointer, so register it to collide with nothing
+        //(mask 0) — otherwise a droplet touching it fires the contact callback with a null RigidBodyInfo
+        dynamics_world->addRigidBody(leaf.static_bind_body.get(), COLLISION_GROUP_LEAF, 0);
 
         btVector3 static_bind_anchor(0, 0, 0);
         btVector3 leaf_anchor(pivot_point[0], pivot_point[1], pivot_point[2]);
@@ -1011,12 +1019,14 @@ struct World::Impl: RigidBodyWorldCommonData
 
   void generate_droplet_particle(const math::vec3f& offset, float friction_factor)
   {
-    scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-    mesh->set_mesh(droplet_debug_particle_mesh);
+    scene::Mesh::Pointer mesh; // particles are never rendered unless debug-drawing -> don't allocate/sync a scene mesh
 
     if (DROPLET_DEBUG_DRAW)
+    {
+      mesh = scene::Mesh::create();
+      mesh->set_mesh(droplet_debug_particle_mesh);
       mesh->bind_to_parent(*scene_root);
+    }
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, COLLISION_GROUP_DROPLET, COLLISION_MASK_DROPLET, dynamics_world));
 
@@ -1153,6 +1163,13 @@ struct World::Impl: RigidBodyWorldCommonData
       return particle->body->getWorldTransform().getOrigin().getY() < MIN_DROPLET_PARTICLE_HEIGHT;
     }), droplet_particles.end());
 
+      //and drop them from the master list too, so ~PhysBodySync removes the rigid body from the Bullet world
+      //(only droplet particles; ground/leaf bodies have no droplet_particle and are left untouched)
+
+    phys_bodies.erase(std::remove_if(phys_bodies.begin(), phys_bodies.end(), [](const std::shared_ptr<PhysBodySync>& body) {
+      return body->droplet_particle && body->droplet_particle->fallen;
+    }), phys_bodies.end());
+
       //clusterize droplet particles to droplets
 
     float cluster_radius = DROPLET_RADIUS;
@@ -1164,6 +1181,7 @@ struct World::Impl: RigidBodyWorldCommonData
       for (std::shared_ptr<Droplet>& droplet : droplets)
       {
         droplet->points.clear();
+        droplet->bodies.clear(); // was never cleared -> bodies accumulated across passes/frames, ramping cohesion force and leaking refs
         droplet->hull_builder.reset();
       }
 
@@ -1388,7 +1406,13 @@ struct World::Impl: RigidBodyWorldCommonData
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
-      droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL);
+      //build_hull now returns false for a degenerate point set (too few / coplanar) instead of
+      //dereferencing an empty vector — hide that droplet's stale hull mesh until it has a valid hull
+      if (!droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL))
+      {
+        if (!DROPLET_DEBUG_DRAW && droplet->hull_mesh)
+          droplet->hull_mesh->unbind();
+      }
     }
 
     //apply sd to droplets
@@ -1404,17 +1428,15 @@ struct World::Impl: RigidBodyWorldCommonData
 
         //static const float TIME_STEP = 1.0f / 60.0f;
 
-        math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);
-        float distance = length(force);
+        math::vec3f to_center = droplet->center - position;
+        float distance = length(to_center);
 
-        if (distance < DROPLET_PARTICLE_FORCE_DISTANCE && distance > DROPLET_PARTICLE_MIN_INTERACTION_RADIUS)
+        //pull toward the centroid (no upper gate, so spread stragglers get reclaimed instead of abandoned),
+        //with velocity damping so the spring settles into a blob instead of oscillating
+        if (distance > DROPLET_PARTICLE_MIN_INTERACTION_RADIUS)
         {
-          //force = normalize(force) * (DROPLET_RADIUS - distance) / DROPLET_RADIUS * DROPLET_PARTICLE_FORCE;
-          //force = normalize(force) * (DROPLET_PARTICLE_FORCE_DISTANCE - distance) * DROPLET_PARTICLE_FORCE;
-          force *= DROPLET_PARTICLE_FORCE;
+          math::vec3f force = to_center * DROPLET_PARTICLE_FORCE - velocity * DROPLET_PARTICLE_DAMPING;
           particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-          //particle->body->applyCentralForce(btVector3(0, -10, 0));
-          //particle1->body->applyCentralForce(-btVector3(force[0], force[1], force[2]));
         }
 
         //static const float VELOCITY_BRAKE_FACTOR = 0.0001f;
@@ -1440,6 +1462,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
     for (std::shared_ptr<PhysBodySync>& particle : phys_bodies)
     {
+      if (!particle->mesh) // invisible droplet particle (debug draw off) -> nothing to sync
+        continue;
+
       btTransform transform;
 
       if (particle->body && particle->body->getMotionState())

@@ -15,22 +15,22 @@ approaches (do one or the other, not both).
 
 | Pri | ID | Task | Sev | Effort | Depends on | Notes |
 |-----|----|------|-----|--------|-----------|-------|
-| **P0** | [B1](#b1) | Clear `droplet->bodies` each clustering pass | High | XS | — | blocks [M1](#m1) |
+| **P0** | [B1](#b1) | Clear `droplet->bodies` each clustering pass — ✅ **DONE** | High | XS | — | blocks [M1](#m1) |
 | **P0** | [B3](#b3) | Fix water height-field vertex stride — ✅ **DONE** | High | S | — | blocks [O2](#o2), [M5](#m5) |
 | **P0** | [B4](#b4) | Clamp water noise splash (OOB write) — ✅ **DONE** | Low | XS | — | do with [B3](#b3) |
-| **P0** | [B5](#b5) | Guard empty/degenerate convex-hull input | Med | S | — | blocks [O4](#o4) |
-| **P0** | [B6](#b6) | Fix null-deref in `contact_added_callback` | High | S | — | — |
-| **P1** | [B2](#b2) | Destroy fallen particles (`phys_bodies` leak) | High | M | — | blocks [O1](#o1) |
+| **P0** | [B5](#b5) | Guard empty/degenerate convex-hull input — ✅ **DONE** | Med | S | — | blocks [O4](#o4) |
+| **P0** | [B6](#b6) | Fix null-deref in `contact_added_callback` — ✅ **DONE** | High | S | — | — |
+| **P1** | [B2](#b2) | Destroy fallen particles (`phys_bodies` leak) — ✅ **DONE** | High | M | — | blocks [O1](#o1) |
 | **P1** | [B8](#b8) | Pass real frame `dt` to `stepSimulation` | High | M | — | interacts [M1](#m1),[M4](#m4) |
 | **P1** | [B7](#b7) | Normal matrix for non-uniform scale | High | M | — | benefits [M2](#m2) |
-| **P1** | [O1](#o1) | Skip invisible per-particle scene meshes | Med | S | [B2](#b2) | — |
+| **P1** | [O1](#o1) | Skip invisible per-particle scene meshes — ✅ **DONE** | Med | S | [B2](#b2) | — |
 | **P2** | [O5](#o5) | Incremental centroid (O(n²)→O(n)) | Low | S | — | pairs with [B1](#b1) |
 | **P2** | [O2](#o2) | Stream water VBO (dynamic, y+normal only) | Med | M | [B3](#b3) | superseded-by GPU path in [M5](#m5) |
 | **P2** | [O3](#o3) | Throttle/​shrink droplet env-map cubemaps | Med | M | — | — |
 | **P2** | [O4](#o4) | Cache/throttle hull rebuild; drop redundant work | Med | S | [B5](#b5) | superseded-by [M2](#m2) |
 | **P2** | [O7](#o7) | Micro-cleanups (RNG, ring buffer, hasher) | Nit | S | — | — |
 | **P2** | [O9](#o9) | Release build profile (no source maps, LTO) | Low | XS | — | quick win, non-physics |
-| **P3** | [M1](#m1) | Better cohesion (damping, gate, magnitude) | Med | M | [B1](#b1) | interacts [B8](#b8),[O8](#o8) |
+| **P3** | [M1](#m1) | Better cohesion (damping, gate, magnitude) — ✅ **DONE** | Med | M | [B1](#b1) | interacts [B8](#b8),[O8](#o8) |
 | **P3** | [M3](#m3) | Leaf shape (convex/GImpact) + real inertia | Med | M | — | — |
 | **P3** | [M4](#m4) | Fix leaf controller dt + keep body awake | Low | S | — | interacts [B8](#b8) |
 | **P3** | [M5](#m5) | Couple water ripples to droplet impacts | Low | M | [B3](#b3) | — |
@@ -73,15 +73,17 @@ graph LR
 ## 4. Tasks — Correctness bugs
 
 <a id="b1"></a>
-### B1 — Clear the `droplet->bodies` vector each clustering pass
+### B1 — Clear the `droplet->bodies` vector each clustering pass  ·  ✅ DONE
 - **Loc:** [world.cpp:1003-1007](../src/launcher/world.cpp#L1003-L1007) · **Sev:** High · **Effort:** XS
+- **Fixed:** `bodies.clear()` added to the reset. Note this removed an accidental Nx cohesion-force multiplier, which required completing [M1](#m1) to restore droplet binding.
 - **Why:** the per-pass reset clears `points`/`hull_builder` but never `bodies`, so it accumulates across the 3 passes *and* across frames for surviving droplets. The cohesion loop applies `applyCentralForce` once per entry → force ramps up over a droplet's lifetime (over-compression, jitter, blow-up) plus unbounded memory.
 - **Fix:** add `droplet->bodies.clear();` next to `droplet->points.clear();`.
 - **Unblocks:** [M1](#m1) (can't tune cohesion while it's multiplied). Pairs with [O5](#o5).
 
 <a id="b2"></a>
-### B2 — Destroy fallen particles (`phys_bodies` / Bullet-world leak)
+### B2 — Destroy fallen particles (`phys_bodies` / Bullet-world leak)  ·  ✅ DONE
 - **Loc:** [world.cpp:991-993](../src/launcher/world.cpp#L991-L993), push at [:862](../src/launcher/world.cpp#L862), sync at [:1280](../src/launcher/world.cpp#L1280) · **Sev:** High · **Effort:** M
+- **Fixed:** fallen particles are now also `remove_if`'d from `phys_bodies` so `~PhysBodySync` runs. Exposed (and fixed) a latent null-deref: `PhysBodySync` never stored its `dynamics_world` member, so the destructor crashed once bodies actually got destroyed.
 - **Why:** a fallen particle (y < −6) is erased only from `droplet_particles`, never from the master `phys_bodies`, so `~PhysBodySync` (which calls `removeRigidBody`) never runs. The body keeps falling forever in the Bullet world and is transform-synced every frame. ~150 leaked bodies/min → monotonic frame-time + memory growth.
 - **Fix:** tag `PhysBodySync` dead on fall and `remove_if` it from `phys_bodies` too (leave ground/leaf bodies untouched).
 - **Unblocks:** [O1](#o1).
@@ -102,15 +104,17 @@ graph LR
 - **Fix:** use `rand() % (GRID-6)` (or `3 + rand()%(GRID-6)` and drop the `+3`). Do alongside [B3](#b3).
 
 <a id="b5"></a>
-### B5 — Guard empty / degenerate convex-hull input
+### B5 — Guard empty / degenerate convex-hull input  ·  ✅ DONE
 - **Loc:** [hull.cpp:96](../src/launcher/hull/hull.cpp#L96), call site [world.cpp:1228-1231](../src/launcher/world.cpp#L1228-L1231) · **Sev:** Med · **Effort:** S
+- **Fixed:** `build_hull` returns false for `< 12` floats (4 points) before indexing the empty vector; the call site hides the droplet's stale hull mesh on failure.
 - **Why:** `&impl->input_vertices[0]` on an empty vector is UB; `build_hull` is called unconditionally even for droplets that contributed no points, and a hull needs ≥4 non-coplanar points.
 - **Fix:** `if (impl->input_vertices.size() < 12) return false;` before line 96; only call `build_hull` for droplets past `MIN_DROPLET_PARTICLES_COUNT`. On failure, hide/unbind that droplet's mesh.
 - **Unblocks:** [O4](#o4).
 
 <a id="b6"></a>
-### B6 — Fix null-pointer deref in `contact_added_callback`
+### B6 — Fix null-pointer deref in `contact_added_callback`  ·  ✅ DONE
 - **Loc:** [world.cpp:270](../src/launcher/world.cpp#L270), anchor created [:781-785](../src/launcher/world.cpp#L781-L785) · **Sev:** High · **Effort:** S
+- **Fixed:** the callback null-checks both `RigidBodyInfo`s, and the leaf constraint anchor is now registered with mask 0 (collides with nothing), so a droplet can't trigger the callback against it.
 - **Why:** the `static_bind_body` constraint anchor never gets `setUserPointer`, so a droplet touching the tiny r=0.01 pivot sphere dereferences a null `RigidBodyInfo` → crash. (Narrow trigger, but reachable during normal leaf play.)
 - **Fix:** flag the anchor `CF_NO_CONTACT_RESPONSE` (or a no-collide group/mask) so it's a pure constraint anchor; also null-check both infos at the top of the callback and `return false`.
 
@@ -133,8 +137,9 @@ graph LR
 ## 5. Tasks — Model / physical plausibility
 
 <a id="m1"></a>
-### M1 — Improve the droplet cohesion model
+### M1 — Improve the droplet cohesion model  ·  ✅ DONE
 - **Loc:** [world.cpp:1246-1254](../src/launcher/world.cpp#L1246-L1254) · **Sev:** Med · **Effort:** M · **Depends:** [B1](#b1)
+- **Fixed:** raised the centroid spring (`DROPLET_PARTICLE_FORCE` 0.0004 → 0.02) now that [B1](#b1) removed the force multiplier, added velocity damping (`DROPLET_PARTICLE_DAMPING`), and removed the upper distance gate. Particles/droplet recovered from ~1 (scattered) to ~24. A full SPH/surface-tension model (Akinci 2013) remains a future option.
 - **Why:** it's an undamped centroid spring that is ~75× too weak to bind (≈0.2 vs 15 m/s²), and the upper-distance gate (>1.0 → zero force) abandons exactly the stragglers cohesion should reclaim.
 - **Fix:** remove the upper gate; add damping `F = k(center−pos) − c·vel`, `c ≈ 2√(km)`; raise magnitude to target a few m/s². For real behavior, move to a neighbor-summed SPH cohesion + surface-tension term (Akinci 2013).
 - **Interacts:** [B8](#b8) (tune after real dt), [O8](#o8).
@@ -169,8 +174,9 @@ graph LR
 ## 6. Tasks — Optimizations & cleanups
 
 <a id="o1"></a>
-### O1 — Don't create/sync invisible per-particle scene meshes
+### O1 — Don't create/sync invisible per-particle scene meshes  ·  ✅ DONE
 - **Loc:** [world.cpp:855-857](../src/launcher/world.cpp#L855-L857), sync [:1280](../src/launcher/world.cpp#L1280) · **Sev:** Med · **Effort:** S · **Depends:** [B2](#b2)
+- **Fixed:** when `DROPLET_DEBUG_DRAW` is off, no per-particle `scene::Mesh` is allocated; the sync loop skips null meshes.
 - **Fix:** when `DROPLET_DEBUG_DRAW` is false, skip per-particle `scene::Mesh` creation and exclude particles from the sync loop — they're never rendered.
 
 <a id="o2"></a>

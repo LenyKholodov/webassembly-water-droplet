@@ -87,9 +87,10 @@ bool HullBuilder::build_hull(const char* material_name)
 {
   engine_check_null(material_name);
 
-    //remove far points
+    //a convex hull needs at least 4 (non-coplanar) points; bail out before indexing an empty vector (UB)
 
-  
+  if (impl->input_vertices.size () < 12)
+    return false;
 
     //convex hull building
 
