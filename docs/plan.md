@@ -21,7 +21,7 @@ approaches (do one or the other, not both).
 | **P0** | [B5](#b5) | Guard empty/degenerate convex-hull input — ✅ **DONE** | Med | S | — | blocks [O4](#o4) |
 | **P0** | [B6](#b6) | Fix null-deref in `contact_added_callback` — ✅ **DONE** | High | S | — | — |
 | **P1** | [B2](#b2) | Destroy fallen particles (`phys_bodies` leak) — ✅ **DONE** | High | M | — | blocks [O1](#o1) |
-| **P1** | [B8](#b8) | Pass real frame `dt` to `stepSimulation` | High | M | — | interacts [M1](#m1),[M4](#m4) |
+| **P1** | [B8](#b8) | Pass real frame `dt` to `stepSimulation` — ✅ **DONE** | High | M | — | interacts [M1](#m1),[M4](#m4) |
 | **P1** | [B7](#b7) | Normal matrix for non-uniform scale | High | M | — | benefits [M2](#m2) |
 | **P1** | [O1](#o1) | Skip invisible per-particle scene meshes — ✅ **DONE** | Med | S | [B2](#b2) | — |
 | **P2** | [O5](#o5) | Incremental centroid (O(n²)→O(n)) | Low | S | — | pairs with [B1](#b1) |
@@ -126,8 +126,9 @@ graph LR
 - **Benefits:** [M2](#m2).
 
 <a id="b8"></a>
-### B8 — Pass the real frame delta to `stepSimulation`
+### B8 — Pass the real frame delta to `stepSimulation`  ·  ✅ DONE
 - **Loc:** [world.cpp:943](../src/launcher/world.cpp#L943); real `dt` already computed + discarded at [main.cpp:413](../src/launcher/main.cpp#L413) · **Sev:** High · **Effort:** M
+- **Done:** `dt` is threaded `main.cpp` → `World::update(float dt)` → `stepSimulation(min(dt,0.25), 10, 1/60)`; the water wave/swell sim runs once per returned substep, so it's real-time too. At ~60fps behaviour is unchanged (1 substep); other rates are now correct. Cohesion re-validated (still ~24 particles/droplet).
 - **Why:** a hardcoded `1.f/60.f` makes physics advance exactly 1/60 s per rendered frame → 0.5× speed at 30 fps, ~2× at 120 Hz. (`maxSubSteps=10` is also dead because timeStep == fixedTimeStep.)
 - **Fix:** thread the real `dt` through `World::update(dt)` and call `stepSimulation(min(dt,0.25f), 10, 1.f/60.f)`. Drive the water step ([M5](#m5)/[O2](#o2)) from the same fixed accumulator.
 - **Interacts:** [M1](#m1), [M4](#m4) (re-tune after this lands).

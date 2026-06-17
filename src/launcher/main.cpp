@@ -394,8 +394,12 @@ int main(void)
         sound_player.play_music(true);
       }
 
+      double new_time = app.time();
+      double dt = new_time - last_time;
+      last_time = new_time;
+
       world.inputDrag(target_offset_x, target_offset_y, target_offset_z);
-      world.update();
+      world.update((float) dt);
 
       sound_player.update();
 
@@ -410,11 +414,6 @@ int main(void)
 
         passes_initialized = true;
       }
-
-      double new_time = app.time();
-      double dt = new_time - last_time;
-
-      last_time = new_time;
 
       if (!math::equal(camera_move_direction, math::vec3f(0.f), 0.1f))
       {

@@ -1096,7 +1096,9 @@ struct World::Impl: RigidBodyWorldCommonData
     plants.push_back(plant);
   }
 
-  void update()
+  int last_substeps = 0; // number of fixed physics substeps run this frame (drives the water at the same rate)
+
+  void update(float dt)
   {
     last_frame_time = clock();
 
@@ -1108,9 +1110,13 @@ struct World::Impl: RigidBodyWorldCommonData
       engine_log_debug("Droplets count: %d (particles count %d)", droplets.size(), droplet_particles.size());
     }
 
-      //step the simulation
+      //step the simulation with the real frame time (clamped to avoid a spiral of death), advancing
+      //by a fixed 1/60 substep so behaviour is frame-rate independent (was hardcoded 1/60 per frame ->
+      //0.5x speed at 30fps, 2x at 120Hz). Bullet's substep count then drives the water at the same rate.
 
-    dynamics_world->stepSimulation(1.f / 60.f, 10);
+    float clamped_dt = dt < (1.f / 4.f) ? dt : (1.f / 4.f);
+
+    last_substeps = dynamics_world->stepSimulation(clamped_dt, 10, 1.f / 60.f);
 
       //generate droplets
 
@@ -1542,7 +1548,8 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //update water surface
 
-    water_surface.update();
+    for (int s = 0; s < last_substeps; ++s) // run the wave/swell sim once per fixed physics substep -> real-time, fps-independent
+      water_surface.update();
 
       //update fireflies
 
@@ -1621,9 +1628,9 @@ World::~World()
 {
 }
 
-void World::update()
+void World::update(float dt)
 {
-  impl->update();
+  impl->update(dt);
 }
 
 /// Input control
