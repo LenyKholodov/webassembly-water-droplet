@@ -29,7 +29,7 @@ approaches (do one or the other, not both).
 | **P2** | [O3](#o3) | Throttle/​shrink droplet env-map cubemaps — ✅ **DONE** | Med | M | — | — |
 | **P2** | [O4](#o4) | Cache/throttle hull rebuild; drop redundant work | Med | S | [B5](#b5) | superseded-by [M2](#m2) |
 | **P2** | [O7](#o7) | Micro-cleanups (RNG, ring buffer, hasher) | Nit | S | — | — |
-| **P2** | [O9](#o9) | Release build profile (no source maps, LTO) | Low | XS | — | quick win, non-physics |
+| **P2** | [O9](#o9) | Release build profile (no source maps, LTO) — ✅ **DONE** | Low | XS | — | quick win, non-physics |
 | **P3** | [M1](#m1) | Better cohesion (damping, gate, magnitude) — ✅ **DONE** | Med | M | [B1](#b1) | interacts [B8](#b8),[O8](#o8) |
 | **P3** | [M3](#m3) | Leaf shape (convex/GImpact) + real inertia | Med | M | — | — |
 | **P3** | [M4](#m4) | Fix leaf controller dt + keep body awake | Low | S | — | interacts [B8](#b8) |
@@ -222,9 +222,9 @@ graph LR
 - **Fix:** remove `COLLISION_GROUP_DROPLET` from `COLLISION_MASK_DROPLET` (let particles interpenetrate). Only after [M1](#m1) gives cohesion enough authority to hold shape.
 
 <a id="o9"></a>
-### O9 — Release build profile
+### O9 — Release build profile  ·  ✅ DONE
 - **Loc:** [Makefile:7](../Makefile#L7) · **Sev:** Low · **Effort:** XS
-- **Fix:** add a release target that drops `-gsource-map` (binary bloat) and optionally adds `-flto`; keep debug flags behind a toggle. Non-physics quick win.
+- **Done:** `make RELEASE=1` drops `-gsource-map` (removes the ~711 KB `.map` and the in-wasm debug info) and adds a link-time wasm-opt `-O3`; default build keeps source maps for debugging. Deliverable shrinks ~1.6 MB (wasm 10.65→9.94 MB, js 333→149 KB, no `.map`). `clean` now also removes the generated wasm/map. `-flto` left off — it conflicts with emscripten's exception handling ("attempt to add bitcode file after LTO").
 
 ---
 
