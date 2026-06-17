@@ -26,7 +26,7 @@ approaches (do one or the other, not both).
 | **P1** | [O1](#o1) | Skip invisible per-particle scene meshes — ✅ **DONE** | Med | S | [B2](#b2) | — |
 | **P2** | [O5](#o5) | Incremental centroid (O(n²)→O(n)) | Low | S | — | pairs with [B1](#b1) |
 | **P2** | [O2](#o2) | Stream water VBO (dynamic, y+normal only) — ✅ **DONE** (core) | Med | M | [B3](#b3) | superseded-by GPU path in [M5](#m5) |
-| **P2** | [O3](#o3) | Throttle/​shrink droplet env-map cubemaps | Med | M | — | — |
+| **P2** | [O3](#o3) | Throttle/​shrink droplet env-map cubemaps — ✅ **DONE** | Med | M | — | — |
 | **P2** | [O4](#o4) | Cache/throttle hull rebuild; drop redundant work | Med | S | [B5](#b5) | superseded-by [M2](#m2) |
 | **P2** | [O7](#o7) | Micro-cleanups (RNG, ring buffer, hasher) | Nit | S | — | — |
 | **P2** | [O9](#o9) | Release build profile (no source maps, LTO) | Low | XS | — | quick win, non-physics |
@@ -188,10 +188,10 @@ graph LR
 - **Deferred:** streaming only y+normal (uploading static x/z/UV/colour once) needs a split vertex format / second VBO — left for the GPU height-field path ([M5](#m5)) that supersedes this. 64² grid not changed (would coarsen the tuned swell).
 
 <a id="o3"></a>
-### O3 — Throttle / shrink droplet environment cubemaps
+### O3 — Throttle / shrink droplet environment cubemaps  ·  ✅ DONE
 - **Loc:** [world.cpp:1083](../src/launcher/world.cpp#L1083), [mirrors_render_pass.cpp:53-64](../src/render/scene_passes/mirrors_render_pass.cpp#L53-L64) · **Sev:** Med · **Effort:** M
 - **Why:** each droplet re-renders the whole scene into 6 cubemap faces every frame (up to ~18 scene renders/frame).
-- **Fix:** lower cubemap resolution, refresh every Nth frame, and/or share one env map across droplets.
+- **Done:** cubemap face size 512 → 256 (4× fewer face pixels), and each droplet's cubemap is re-rendered only every 2nd frame (staggered per entity; a brand-new env map always renders immediately so it's never black). ~8× fewer env-map fragment renders, half the env-map scene traversals. Imperceptible on the small fast droplets. Sharing one env map across droplets left as a further option.
 
 <a id="o4"></a>
 ### O4 — Cache/throttle hull rebuild; drop redundant work
