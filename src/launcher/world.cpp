@@ -35,8 +35,8 @@ const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.03f;    // centroid spring (lowered: less compression so particles spread into a fuller, bigger droplet)
-const float DROPLET_PARTICLE_DAMPING = 0.012f; // velocity damping so the stronger spring settles instead of oscillating/jittering
+const float DROPLET_PARTICLE_FORCE = 0.10f;    // centroid spring: below ~0.08 droplets are too loose and slip THROUGH the leaf (it has a thin static-mesh collider); 0.10 keeps them resting on it
+const float DROPLET_PARTICLE_DAMPING = 0.018f; // velocity damping so the spring settles instead of oscillating/jittering
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
@@ -66,7 +66,7 @@ const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               /
 // per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
 const bool   DROPLET_REFLECT_SKYBOX = true;
 static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 4; // 4 shells -> 100 particles per droplet (2x the previous 50)
-const size_t MAX_PARTICLES_COUNT = 360;                                  // room for ~3 droplets x 100 particles
+const size_t MAX_PARTICLES_COUNT = 600;                                  // total particle budget (recycled oldest-first when exceeded)
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
@@ -248,6 +248,7 @@ struct Leaf
   std::shared_ptr<btTypedConstraint> constraint;
   btTransform target_transform;
   math::vec3f initial_center;
+  math::vec3f local_center; // mesh centroid in body-local space, to spawn droplets at the leaf's CURRENT pose
   scene::PointLight::Pointer point_light;
 
   Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
@@ -963,7 +964,8 @@ struct World::Impl: RigidBodyWorldCommonData
         }
 
         initial_center /= indices_count;
-        initial_center  = rotation * initial_center + position;
+        math::vec3f local_center = initial_center;             // body-local mesh centroid (before placement)
+        initial_center  = rotation * initial_center + position; // world centroid at init
 
         Leaf leaf(last_frame_time, *this);
 
@@ -975,6 +977,7 @@ struct World::Impl: RigidBodyWorldCommonData
         leaf.phys_body = phys_bodies.back();
         leaf.target_transform = leaf.phys_body->body->getWorldTransform();
         leaf.initial_center = initial_center;
+        leaf.local_center   = local_center;
 
         leaf.phys_body->body->setUserPointer(leaf.rigid_body_info.get());
 
@@ -1056,7 +1059,14 @@ struct World::Impl: RigidBodyWorldCommonData
     size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
     Leaf& leaf = leaves[leaf_index];
 
-    generate_droplet(leaf.initial_center + math::vec3f(0, 0.5, 0));
+    // Spawn above the leaf's CURRENT centroid. The leaf moves/tilts over time (physics + particle
+    // impacts), so spawning at the stale initial centre dropped droplets into empty air where the leaf
+    // used to be -> nothing landed -> "no droplets after a while".
+    btVector3 lc(leaf.local_center[0], leaf.local_center[1], leaf.local_center[2]);
+    btVector3 c = leaf.phys_body->body->getWorldTransform() * lc;
+    math::vec3f spawn(c.x(), c.y() + 0.5f, c.z());
+
+    generate_droplet(spawn);
   }
 
   void generate_droplet(const math::vec3f& droplet_center)
