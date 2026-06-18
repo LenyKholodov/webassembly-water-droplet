@@ -26,12 +26,12 @@ const char* PLANT_MESH = "media/meshes/fern.obj";
 const size_t CLUSTERIZE_STEPS_COUNT = 3;
 const float CLUSTERIZE_STEP_FACTOR = 1.2;
 const size_t PREFERRED_MAX_DROPLETS_COUNT = 3;
-const float DROPLET_PARTICLE_RADIUS = 0.05f;
+const float DROPLET_PARTICLE_RADIUS = 0.06f;
 const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.05f;    // centroid spring: raised so the (now 2x, smaller) particles bind into a tighter, more readable droplet
+const float DROPLET_PARTICLE_FORCE = 0.03f;    // centroid spring (lowered: less compression so particles spread into a fuller, bigger droplet)
 const float DROPLET_PARTICLE_DAMPING = 0.012f; // velocity damping so the stronger spring settles instead of oscillating/jittering
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
@@ -54,15 +54,15 @@ const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f
 // environment cubemap for reflection/refraction; only the surface + normal differ. Toggle to A/B.
 const bool   DROPLET_RAYMARCH = true;
 const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
-const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = DROPLET_PARTICLE_RADIUS * 1.4f; // per-particle metaball sphere radius — smaller spheres, more of them (main size knob)
-const float  DROPLET_INFLUENCE_RADIUS = 0.10f;                                 // smooth-min blend k: blobbiness / how aggressively particles merge
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = DROPLET_PARTICLE_RADIUS * 1.6f; // per-particle metaball sphere radius — bigger so spheres fill a fuller droplet (main size knob)
+const float  DROPLET_INFLUENCE_RADIUS = 0.13f;                                 // smooth-min blend k: bigger -> spheres merge into one coherent blob instead of scattered specks
 const float  DROPLET_ISO_THRESHOLD = 0.0f;                                     // surface iso level: inflate (+) / thin (-) (tuning)
 const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
 // Droplet reflection source: true -> the static skybox cubemap (cheap, consistent, and skips the
 // per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
 const bool   DROPLET_REFLECT_SKYBOX = true;
-static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 2; // LAYERS 1->2 doubles particles per droplet (25 -> 50)
-const size_t MAX_PARTICLES_COUNT = 180;                                  // 2x to leave room for the doubled per-droplet particle count
+static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 4; // 4 shells -> 100 particles per droplet (2x the previous 50)
+const size_t MAX_PARTICLES_COUNT = 360;                                  // room for ~3 droplets x 100 particles
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
@@ -1139,16 +1139,18 @@ struct World::Impl: RigidBodyWorldCommonData
     std::vector<math::vec4f> particles;
     particles.reserve(MAX_DROPLET_RAYMARCH_PARTICLES);
 
-      //subsample if a cluster ever exceeds the shader's fixed array size
+      //evenly sample up to the shader's fixed array size from the (now denser) cluster.
+      //spreads MAX picks across the whole set, so a 100-particle droplet actually uses all 64
+      //(the old stride-by-ceil only used ~50 of 100).
 
-    size_t stride = droplet->points.size() > MAX_DROPLET_RAYMARCH_PARTICLES
-                  ? (droplet->points.size() + MAX_DROPLET_RAYMARCH_PARTICLES - 1) / MAX_DROPLET_RAYMARCH_PARTICLES
-                  : 1;
+    size_t count = droplet->points.size();
+    size_t used  = count < MAX_DROPLET_RAYMARCH_PARTICLES ? count : MAX_DROPLET_RAYMARCH_PARTICLES;
 
     float max_dist = 0.0f;
 
-    for (size_t i = 0; i < droplet->points.size() && particles.size() < MAX_DROPLET_RAYMARCH_PARTICLES; i += stride)
+    for (size_t k = 0; k < used; k++)
     {
+      size_t i = (count <= MAX_DROPLET_RAYMARCH_PARTICLES) ? k : (k * count) / used;
       const math::vec3f& p = droplet->points[i];
       particles.push_back(math::vec4f(p[0], p[1], p[2], DROPLET_RAYMARCH_PARTICLE_RADIUS));
       max_dist = std::max(max_dist, length(p - droplet->center));
