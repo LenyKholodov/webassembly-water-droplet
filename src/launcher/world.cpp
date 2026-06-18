@@ -48,6 +48,16 @@ const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 30;
 const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f;
+
+// Droplet surface representation: true -> metaball SDF raymarch (true concavity/necking/merges,
+// exact normals); false -> the original convex-hull surface. Both paths reuse the per-droplet
+// environment cubemap for reflection/refraction; only the surface + normal differ. Toggle to A/B.
+const bool   DROPLET_RAYMARCH = true;
+const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = DROPLET_PARTICLE_RADIUS * 2.0f; // per-particle metaball sphere radius (main size knob)
+const float  DROPLET_INFLUENCE_RADIUS = 0.12f;                                 // smooth-min blend k: blobbiness / how aggressively particles merge
+const float  DROPLET_ISO_THRESHOLD = 0.0f;                                     // surface iso level: inflate (+) / thin (-) (tuning)
+const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
 static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 1;
 const size_t MAX_PARTICLES_COUNT = 90;
 const math::vec3f LEAVES_SCALE(0.1f);
@@ -64,6 +74,7 @@ const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
 
 const char* DROPLET_HULL_MATERIAL = "droplet";
+const char* DROPLET_FLUID_MATERIAL = "droplet_fluid";
 const int COLLISION_GROUP_DROPLET = 1;
 const int COLLISION_GROUP_GROUND = 1 << 1;
 const int COLLISION_GROUP_LEAF = 1 << 2;
@@ -531,6 +542,7 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
+  Material droplet_fluid_material;
   Material sky_material;
   Material water_material;
   std::vector<std::shared_ptr<Plant>> plants;
@@ -577,6 +589,11 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_material.set_textures(materials.find("mtl1")->textures());
     droplet_material.set_properties(materials.find("mtl1")->properties());
 
+    // metaball-raymarch droplet material: same env-cubemap-carrying setup, different shader
+    droplet_fluid_material.set_shader_tags("droplet_fluid");
+    droplet_fluid_material.set_textures(materials.find("mtl1")->textures());
+    droplet_fluid_material.set_properties(materials.find("mtl1")->properties());
+
     Texture sky_texture = render_device.create_texture_cubemap(SKY_TEXTURE_PATH);
 
     sky_texture.set_min_filter(TextureFilter_Linear);
@@ -592,6 +609,7 @@ struct World::Impl: RigidBodyWorldCommonData
     water_textures.insert("skyTexture", sky_texture);
 
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
+    materials.insert(DROPLET_FLUID_MATERIAL, droplet_fluid_material);
     materials.insert(SKY_MATERIAL, sky_material);
     materials.insert(WATER_SURFACE_MATERIAL_NAME, water_material);
 
@@ -1098,6 +1116,56 @@ struct World::Impl: RigidBodyWorldCommonData
 
   int last_substeps = 0; // number of fixed physics substeps run this frame (drives the water at the same rate)
 
+  // Metaball-raymarch surface update for one droplet: position+scale the proxy box to enclose the
+  // particle cluster, and upload the particle field (centres+radius) as per-node shader uniforms.
+  // Replaces the convex-hull build for raymarch droplets; the cubemap reflection/refraction is
+  // unchanged (rendered from the droplet centre as before).
+  void update_droplet_raymarch(const std::shared_ptr<Droplet>& droplet)
+  {
+    if (!droplet->hull_mesh || droplet->points.empty())
+      return;
+
+    std::vector<math::vec4f> particles;
+    particles.reserve(MAX_DROPLET_RAYMARCH_PARTICLES);
+
+      //subsample if a cluster ever exceeds the shader's fixed array size
+
+    size_t stride = droplet->points.size() > MAX_DROPLET_RAYMARCH_PARTICLES
+                  ? (droplet->points.size() + MAX_DROPLET_RAYMARCH_PARTICLES - 1) / MAX_DROPLET_RAYMARCH_PARTICLES
+                  : 1;
+
+    float max_dist = 0.0f;
+
+    for (size_t i = 0; i < droplet->points.size() && particles.size() < MAX_DROPLET_RAYMARCH_PARTICLES; i += stride)
+    {
+      const math::vec3f& p = droplet->points[i];
+      particles.push_back(math::vec4f(p[0], p[1], p[2], DROPLET_RAYMARCH_PARTICLE_RADIUS));
+      max_dist = std::max(max_dist, length(p - droplet->center));
+    }
+
+    int particle_count = (int)particles.size();
+
+      //pad to the shader array size; padding entries are never sampled (the shader breaks at particleCount)
+
+    particles.resize(MAX_DROPLET_RAYMARCH_PARTICLES, math::vec4f(0.0f));
+
+    float box_half = (max_dist + DROPLET_RAYMARCH_PARTICLE_RADIUS + DROPLET_INFLUENCE_RADIUS) * DROPLET_RAYMARCH_BOX_MARGIN;
+
+    droplet->hull_mesh->set_position(droplet->center);
+    droplet->hull_mesh->set_scale(math::vec3f(box_half));
+    droplet->hull_mesh->set_environment_map_local_point(math::vec3f(0.0f)); // node sits at the centre -> cubemap eye = centre
+
+    common::PropertyMap props;
+    props.set("particles", particles);
+    props.set("particleCount", particle_count);
+    props.set("dropletCenter", droplet->center);
+    props.set("influenceRadius", DROPLET_INFLUENCE_RADIUS);
+    props.set("isoThreshold", DROPLET_ISO_THRESHOLD);
+    props.set("boxHalfExtent", box_half);
+
+    droplet->hull_mesh->set_user_data(props);
+  }
+
   void update(float dt)
   {
     last_frame_time = clock();
@@ -1268,8 +1336,12 @@ struct World::Impl: RigidBodyWorldCommonData
 
       droplet->hull_mesh->set_environment_map_required(true); //require envmap prerendering
 
-      droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
-      //droplet->hull_mesh->set_mesh(media::geometry::MeshFactory::create_box(DROPLET_HULL_MATERIAL, 1, 1, 1));        
+      if (DROPLET_RAYMARCH)
+        // proxy box (unit cube [-1,1]); positioned at the centre + scaled to enclose the metaball each frame.
+        // The fragment shader raymarches the particle SDF inside it; the cube itself is never seen.
+        droplet->hull_mesh->set_mesh(media::geometry::MeshFactory::create_box(DROPLET_FLUID_MATERIAL, 2.f, 2.f, 2.f));
+      else
+        droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
 
       droplet->point_light = scene::PointLight::create();
 
@@ -1362,7 +1434,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
-      if (!DROPLET_DEBUG_DRAW)
+      if (!DROPLET_DEBUG_DRAW && !DROPLET_RAYMARCH)
+        // hull mesh lives in world coords with an identity node tm, so the cubemap eye is the world centre.
+        // (Raymarch droplets set this from the build loop, after the proxy node is moved to the centre.)
         droplet->hull_mesh->set_environment_map_local_point(inverse(droplet->hull_mesh->world_tm()) * droplet->center);
 
       if (droplet->prev_centers.size() > DROPLET_CENTER_APPROXIMATION_STEPS_COUNT)
@@ -1409,10 +1483,16 @@ struct World::Impl: RigidBodyWorldCommonData
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),
       droplets.end());
 
-    //build droplet hulls
+    //build droplet surfaces
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
+      if (DROPLET_RAYMARCH)
+      {
+        update_droplet_raymarch(droplet);
+        continue;
+      }
+
       //build_hull now returns false for a degenerate point set (too few / coplanar) instead of
       //dereferencing an empty vector — hide that droplet's stale hull mesh until it has a valid hull
       if (!droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL))

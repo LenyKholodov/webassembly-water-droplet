@@ -19,6 +19,7 @@ static const char* FRESNEL_PROGRAM_FILE = "media/shaders/fresnel.glsl";
 static const char* SKY_PROGRAM_FILE = "media/shaders/sky.glsl";
 static const char* WATER_PROGRAM_FILE = "media/shaders/water.glsl";
 static const char* FIREFLY_PROGRAM_FILE = "media/shaders/firefly.glsl";
+static const char* DROPLET_FLUID_PROGRAM_FILE = "media/shaders/droplet_fluid.glsl";
 
 ///
 /// Forward lighting pass
@@ -33,11 +34,13 @@ struct ForwardLightingPass : IScenePass
       , sky_program(device.create_program_from_file(SKY_PROGRAM_FILE))
       , water_program(device.create_program_from_file(WATER_PROGRAM_FILE))
       , firefly_program(device.create_program_from_file(FIREFLY_PROGRAM_FILE))
+      , droplet_fluid_program(device.create_program_from_file(DROPLET_FLUID_PROGRAM_FILE))
       , forward_lighting_pass(device.create_pass(forward_lighting_program))
       , fresnel_pass(device.create_pass(fresnel_program))
       , sky_pass(device.create_pass(sky_program))
       , water_pass(device.create_pass(water_program))
       , firefly_pass(device.create_pass(firefly_program))
+      , droplet_fluid_pass(device.create_pass(droplet_fluid_program))
     {
       forward_lighting_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
       // no back-face culling: the planar water-reflection render mirrors the scene (flips winding),
@@ -48,6 +51,13 @@ struct ForwardLightingPass : IScenePass
       // droplets (the "fresnel" material) are opaque and reflect the scene env-map (original look)
       fresnel_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
       fresnel_pass.set_clear_flags(Clear_None);
+
+      // metaball-raymarch droplets: same opaque, env-map-reflecting role as the fresnel pass, but the
+      // surface is raymarched in the fragment shader inside a proxy box (no back-face culling so the box
+      // still rasterizes when the camera is close; the shader discards rays that miss the fluid).
+      droplet_fluid_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+      droplet_fluid_pass.set_rasterizer_state(RasterizerState(false));
+      droplet_fluid_pass.set_clear_flags(Clear_None);
 
       sky_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
       sky_pass.set_rasterizer_state(RasterizerState(false));
@@ -65,7 +75,8 @@ struct ForwardLightingPass : IScenePass
       firefly_pass.set_clear_flags(Clear_None);
 
       size_t default_pass_index = pass_group.add_pass(nullptr, forward_lighting_pass, 0);
-      pass_group.add_pass("fresnel", fresnel_pass, 1); // opaque droplets
+      pass_group.add_pass("fresnel", fresnel_pass, 1); // opaque droplets (convex-hull surface)
+      pass_group.add_pass("droplet_fluid", droplet_fluid_pass, 1); // opaque droplets (metaball raymarch surface)
       pass_group.add_pass("sky", sky_pass, 2);         // sky fills the background
       pass_group.add_pass("water", water_pass, 3);     // transparent water blends over everything
       pass_group.add_pass("firefly", firefly_pass, 4); // additive firefly glows on top
@@ -103,6 +114,7 @@ struct ForwardLightingPass : IScenePass
       forward_lighting_pass.set_frame_buffer(context.default_frame_buffer());
       forward_lighting_pass.set_clear_color(context.clear_color());
       fresnel_pass.set_frame_buffer(context.default_frame_buffer());
+      droplet_fluid_pass.set_frame_buffer(context.default_frame_buffer());
       sky_pass.set_frame_buffer(context.default_frame_buffer());
       water_pass.set_frame_buffer(context.default_frame_buffer());
       firefly_pass.set_frame_buffer(context.default_frame_buffer());
@@ -111,6 +123,7 @@ struct ForwardLightingPass : IScenePass
 
       forward_lighting_pass.remove_all_primitives();
       fresnel_pass.remove_all_primitives();
+      droplet_fluid_pass.remove_all_primitives();
       sky_pass.remove_all_primitives();
       water_pass.remove_all_primitives();
       firefly_pass.remove_all_primitives();
@@ -118,6 +131,23 @@ struct ForwardLightingPass : IScenePass
         //traverse scene
 
       visitor.traverse(*root_node, &context.options());
+
+        //find the scene-behind texture: the water pass renders the scene WITHOUT droplets into its
+        //refraction target, which is exactly what a droplet should refract (the leaf behind it).
+        //Droplets sample it in screen space (see droplet_fluid.glsl).
+
+      scene_refraction_texture = nullptr;
+
+      for (auto& water_candidate : visitor.meshes())
+      {
+        if (!water_candidate->is_planar_reflection_required())
+          continue;
+
+        if (WaterReflection* wr = WaterReflection::find(*water_candidate))
+          scene_refraction_texture = &wr->refraction_texture;
+
+        break;
+      }
 
         //configure params
 
@@ -165,12 +195,31 @@ struct ForwardLightingPass : IScenePass
       EnvironmentMap*  envmap   = EnvironmentMap::find(mesh);
       WaterReflection* water_rt = WaterReflection::find(mesh);
 
-      TextureList prim_textures = envmap ? envmap->textures
-                                : (water_rt ? water_rt->textures : Pass::default_primitive_textures());
+      TextureList prim_textures;
+
+      if (envmap)
+      {
+          //droplets: cubemap for reflection + the scene-behind texture for screen-space refraction
+        prim_textures.insert("environmentMap", envmap->portal_texture);
+
+        if (scene_refraction_texture)
+          prim_textures.insert("refractionTexture", *scene_refraction_texture);
+      }
+      else if (water_rt)
+        prim_textures = water_rt->textures;
+      else
+        prim_textures = Pass::default_primitive_textures();
+
+        //per-node dynamic uniforms (metaball-raymarch droplets attach a PropertyMap with their
+        //particle field; everything else uses the pass defaults)
+
+      common::PropertyMap* node_props = mesh.find_user_data<common::PropertyMap>();
+      const common::PropertyMap& prim_properties = node_props ? *node_props
+                                                              : Pass::default_primitive_properties();
 
         //add mesh to pass
 
-      pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count(), Pass::default_primitive_properties(),
+      pass_group.add_mesh(renderable_mesh->mesh, mesh.world_tm(), mesh.first_primitive(), mesh.primitives_count(), prim_properties,
         prim_textures);
     }
 
@@ -322,12 +371,15 @@ struct ForwardLightingPass : IScenePass
     Program sky_program;
     Program water_program;
     Program firefly_program;
+    Program droplet_fluid_program;
     Pass forward_lighting_pass;
     Pass fresnel_pass;
     Pass sky_pass;
     Pass water_pass;
     Pass firefly_pass;
+    Pass droplet_fluid_pass;
     PassGroup pass_group;
+    const low_level::Texture* scene_refraction_texture = nullptr; // water pass's scene-minus-droplets target, for droplet refraction
     FrameNode frame;    
     SceneVisitor visitor;
     Vec3fArray point_light_positions;
