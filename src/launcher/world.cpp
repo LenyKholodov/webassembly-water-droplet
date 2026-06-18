@@ -278,6 +278,8 @@ struct LiveTuning
   float iso             = DROPLET_ISO_THRESHOLD;
   float force           = DROPLET_PARTICLE_FORCE;
   float damping         = DROPLET_PARTICLE_DAMPING;
+  int   particles_per_droplet = (int)(LAYERS_COUNT * PARALLELS_COUNT * MERIDIANS_COUNT); // physics particles spawned per droplet
+  float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
 };
 
 struct Droplet
@@ -1049,7 +1051,7 @@ struct World::Impl: RigidBodyWorldCommonData
     // Keep the total particle count bounded by recycling the OLDEST particles, rather than stopping
     // generation. The old behaviour (skip when over MAX_PARTICLES_COUNT) let particles pile up to the
     // cap and then stalled all new droplets, leaving the top leaf permanently empty after a while.
-    const size_t per_droplet = LAYERS_COUNT * PARALLELS_COUNT * MERIDIANS_COUNT;
+    const size_t per_droplet = (size_t) std::max(1, live.particles_per_droplet);
 
     if (droplet_particles.size() + per_droplet > MAX_PARTICLES_COUNT)
       retire_oldest_droplet_particles(droplet_particles.size() + per_droplet - MAX_PARTICLES_COUNT);
@@ -1073,29 +1075,38 @@ struct World::Impl: RigidBodyWorldCommonData
   {
     float friction_factor = crand(DROPLET_MIN_FRICTION_FACTOR, DROPLET_MAX_FRICTION_FACTOR);
 
-    for (size_t i=0; i<LAYERS_COUNT; i++)
+    // (re)build the per-particle collision shape at the current physical radius, so new droplets pick up
+    // the live "physical radius" slider. Existing particles keep their own shape (shared_ptr) -> stable.
+    droplet_particle_shape.reset(new btSphereShape(btScalar(live.physical_radius)));
+    btVector3 bt_local_inertia(0, 0, 0);
+    droplet_particle_shape->calculateLocalInertia(DROPLET_PARTICLE_MASS, bt_local_inertia);
+    droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
+
+    // generate exactly live.particles_per_droplet particles, distributed over concentric shells in a
+    // small ball whose radius scales with the physical radius (was DROPLET_RADIUS/8 = physical*2.5).
+    const int   target      = std::max(1, live.particles_per_droplet);
+    const float ball_radius = live.physical_radius * 20.0f / 8.0f;
+    const size_t per_shell  = PARALLELS_COUNT * MERIDIANS_COUNT;
+    const size_t layers     = (target + per_shell - 1) / per_shell;
+
+    static const float PI2 = 3.1415926f * 2.0f;
+    int made = 0;
+
+    for (size_t i = 0; i < layers && made < target; i++)
     {
-      float radius = float(i+1) / LAYERS_COUNT * DROPLET_RADIUS / 8.0;
+      float radius = float(i + 1) / layers * ball_radius;
 
-      for (size_t j=0; j<PARALLELS_COUNT; j++)
+      for (size_t j = 0; j < PARALLELS_COUNT && made < target; j++)
       {
-        static float PI2 = 3.1415926f * 2.0f;
-
         float angle1 = float(j) / PARALLELS_COUNT * PI2;
-        float rel_y = cos(angle1);
-        //float rel_y = float(j+1) / PARALLELS_COUNT;
+        float y      = 2.0f * (cos(angle1) - 0.5f) * radius;
 
-        rel_y = 2.0f * (rel_y - 0.5f);
-
-        float y = rel_y * radius;
-
-        for (size_t k=0; k<MERIDIANS_COUNT; k++)
+        for (size_t k = 0; k < MERIDIANS_COUNT && made < target; k++)
         {
           float angle2 = float(k) / MERIDIANS_COUNT * PI2;
-
           math::vec3f position(cos(angle2) * radius, y, sin(angle2) * radius);
-
           generate_droplet_particle(position + droplet_center, friction_factor);
+          made++;
         }
       }
     }
@@ -1191,6 +1202,8 @@ struct World::Impl: RigidBodyWorldCommonData
     live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
     live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
     live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
+    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, (int)(LAYERS_COUNT * PARALLELS_COUNT * MERIDIANS_COUNT));
+    live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
 #endif
   }
 
@@ -1331,7 +1344,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //clusterize droplet particles to droplets
 
-    float cluster_radius = DROPLET_RADIUS;
+    float cluster_radius = live.physical_radius * 20.0f; // was DROPLET_RADIUS (= physical * 20)
 
     for (size_t i=0; i<CLUSTERIZE_STEPS_COUNT; i++)
     {
@@ -1607,7 +1620,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
         //pull toward the centroid (no upper gate, so spread stragglers get reclaimed instead of abandoned),
         //with velocity damping so the spring settles into a blob instead of oscillating
-        if (distance > DROPLET_PARTICLE_MIN_INTERACTION_RADIUS)
+        if (distance > live.physical_radius * 4.0f) // was DROPLET_PARTICLE_MIN_INTERACTION_RADIUS (= physical * 4)
         {
           math::vec3f force = to_center * live.force - velocity * live.damping;
           particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
