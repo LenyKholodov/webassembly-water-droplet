@@ -31,7 +31,7 @@ approaches (do one or the other, not both).
 | **P2** | [O7](#o7) | Micro-cleanups (RNG, ring buffer, hasher) | Nit | S | — | — |
 | **P2** | [O9](#o9) | Release build profile (no source maps, LTO) — ✅ **DONE** | Low | XS | — | quick win, non-physics |
 | **P3** | [M1](#m1) | Better cohesion (damping, gate, magnitude) — ✅ **DONE** | Med | M | [B1](#b1) | interacts [B8](#b8),[O8](#o8) |
-| **P3** | [M3](#m3) | Leaf shape (convex/GImpact) + real inertia | Med | M | — | — |
+| **P3** | [M3](#m3) | Leaf shape (convex/GImpact) + real inertia — ✅ **DONE** | Med | M | — | — |
 | **P3** | [M4](#m4) | Fix leaf controller dt + keep body awake | Low | S | — | interacts [B8](#b8) |
 | **P3** | [M5](#m5) | Couple water ripples to droplet impacts | Low | M | [B3](#b3) | — |
 | **P3** | [O6](#o6) | Stable clustering (nearest, frozen centers) | Low | M | [O5](#o5) | — |
@@ -152,10 +152,10 @@ graph LR
 - **Fix:** build an SPH/metaball density field + marching cubes (handles merge/concavity, cheap at low grid res), **or** screen-space fluid (depth → bilateral blur → thickness, no CPU mesh — cheapest for WebGL). Either removes the per-frame CPU hull+subdivision cost.
 
 <a id="m3"></a>
-### M3 — Proper leaf collision shape + inertia
+### M3 — Proper leaf collision shape + inertia  ·  ✅ DONE
 - **Loc:** shape [world.cpp:694](../src/launcher/world.cpp#L694), inertia [:704](../src/launcher/world.cpp#L704) · **Sev:** Med · **Effort:** M
-- **Why:** dynamic leaves use `btBvhTriangleMeshShape` (static-only in Bullet; correct `btGImpactMeshShape` is commented out right below), and inertia is hardcoded isotropic `(1,1,1)·m` so a flat leaf rotates like a solid sphere.
-- **Fix:** use a convex hull / thin box (leaves are nearly flat) or register + use `btGImpactMeshShape`; call `shape->calculateLocalInertia(mass, …)`.
+- **Why:** dynamic leaves used `btBvhTriangleMeshShape` (static-only in Bullet) with hardcoded isotropic inertia `(1,1,1)·m`, so a flat leaf tumbled like a solid sphere.
+- **Done:** replaced with a `btConvexHullShape` built from the leaf vertices (correct dynamic collision proxy for a thin, roughly-convex blade), and compute inertia via `shape->calculateLocalInertia(LEAF_MASS, …)` — the hull's AABB is thin in the leaf-normal axis, giving an anisotropic box-plate inertia. Leaves render/settle stably.
 
 <a id="m4"></a>
 ### M4 — Fix the leaf PD controller

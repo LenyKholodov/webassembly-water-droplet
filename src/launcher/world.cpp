@@ -893,28 +893,20 @@ struct World::Impl: RigidBodyWorldCommonData
             indices.push_back(new_index);
           }
 
-          std::unique_ptr<btTriangleMesh> triangle_mesh(new btTriangleMesh (true, false));
-
-          triangle_mesh->preallocateIndices(indices.size());
-          triangle_mesh->preallocateVertices(vertices.size());
+          // A leaf is a thin, roughly-convex blade. Use a convex hull instead of btBvhTriangleMeshShape:
+          // the triangle-mesh shape is static-only (wrong for a dynamic body) and yields no usable inertia,
+          // whereas a hull collides correctly AND gives a proper anisotropic inertia tensor (see below).
+          btConvexHullShape* hull = new btConvexHullShape();
 
           const math::vec3f* vertex = &vertices[0];
-          size_t vertices_count = vertices.size();
-      
-          for (size_t i=0; i<vertices_count; i++, vertex++)
-            triangle_mesh->findOrAddVertex(btVector3((*vertex)[0], (*vertex)[1], (*vertex)[2]), false);
-          
-          index = &indices[0];
+          for (size_t i=0, vertices_count=vertices.size(); i<vertices_count; i++, vertex++)
+            hull->addPoint(btVector3((*vertex)[0], (*vertex)[1], (*vertex)[2]), false);
 
-          for (size_t i=0, count=indices.size(); i<count; i++, index++)
-            triangle_mesh->addIndex(*index);
+          hull->recalcLocalAabb();
 
-          triangle_mesh->getIndexedMeshArray()[0].m_numTriangles += primitive.count;
+          engine_log_debug("leaf convex hull shape '%s' (%u points)", primitive.name.c_str(), vertices.size());
 
-          engine_log_debug("btBvhTriangleMeshShape phys mesh shape '%s' (%u vertices, %u indices)", primitive.name.c_str(), vertices.size(), indices.size());
-
-          shape = std::shared_ptr<btCollisionShape>(new btBvhTriangleMeshShape(triangle_mesh.release(), true, true));
-          //shape = std::shared_ptr<btCollisionShape>(new btGImpactMeshShape(triangle_mesh.release()));
+          shape = std::shared_ptr<btCollisionShape>(hull);
 
           //shape->setMargin(COLLISION_MARGIN);
 
@@ -923,8 +915,10 @@ struct World::Impl: RigidBodyWorldCommonData
 
           //create leaf
 
-        btVector3 bt_local_inertia(1, 1, 1);
-        bt_local_inertia *= LEAF_MASS;
+        // proper inertia from the hull (thin in the leaf-normal axis -> anisotropic), instead of a hardcoded
+        // isotropic (1,1,1)*mass that made a flat leaf tumble like a uniform sphere
+        btVector3 bt_local_inertia(0, 0, 0);
+        shape->calculateLocalInertia(LEAF_MASS, bt_local_inertia);
         math::vec3f local_inertia(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
 
         phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, position, rotation, mesh, COLLISION_GROUP_LEAF, COLLISION_MASK_LEAF, dynamics_world));
