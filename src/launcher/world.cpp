@@ -14,6 +14,10 @@
 #include <ctime>
 #include <random>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 using namespace engine::common;
 using namespace engine::render::scene;
 using namespace engine::render::low_level;
@@ -261,6 +265,18 @@ struct Plant
 struct PlantLight
 {
   scene::PointLight::Pointer point_light;
+};
+
+// Live-tunable droplet knobs. Defaults are the compile-time constants; on the web they are overridden
+// each frame from window.DROPLET.* (the in-page sliders, see dist/index.html) so the look can be tuned
+// without a rebuild. Bake the final values back into the constants above when satisfied.
+struct LiveTuning
+{
+  float metaball_radius = DROPLET_RAYMARCH_PARTICLE_RADIUS;
+  float influence       = DROPLET_INFLUENCE_RADIUS;
+  float iso             = DROPLET_ISO_THRESHOLD;
+  float force           = DROPLET_PARTICLE_FORCE;
+  float damping         = DROPLET_PARTICLE_DAMPING;
 };
 
 struct Droplet
@@ -562,6 +578,7 @@ struct World::Impl: RigidBodyWorldCommonData
   WaterSurface water_surface;
   scene::Mesh::Pointer sky;
   std::vector<Firefly> fireflies;
+  LiveTuning live; // droplet knobs, refreshed from the in-page sliders each frame (web)
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -1127,6 +1144,19 @@ struct World::Impl: RigidBodyWorldCommonData
 
   int last_substeps = 0; // number of fixed physics substeps run this frame (drives the water at the same rate)
 
+  // Pull live droplet knobs from the in-page sliders (window.DROPLET.*) once per frame; each falls back
+  // to its compile-time constant when the slider/page hasn't set it. No-op off the web.
+  void refresh_live_tuning()
+  {
+#ifdef __EMSCRIPTEN__
+    live.metaball_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.metaballRadius != null) ? window.DROPLET.metaballRadius : $0; }, (double) DROPLET_RAYMARCH_PARTICLE_RADIUS);
+    live.influence       = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.influence      != null) ? window.DROPLET.influence      : $0; }, (double) DROPLET_INFLUENCE_RADIUS);
+    live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
+    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
+    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
+#endif
+  }
+
   // Metaball-raymarch surface update for one droplet: position+scale the proxy box to enclose the
   // particle cluster, and upload the particle field (centres+radius) as per-node shader uniforms.
   // Replaces the convex-hull build for raymarch droplets; the cubemap reflection/refraction is
@@ -1152,7 +1182,7 @@ struct World::Impl: RigidBodyWorldCommonData
     {
       size_t i = (count <= MAX_DROPLET_RAYMARCH_PARTICLES) ? k : (k * count) / used;
       const math::vec3f& p = droplet->points[i];
-      particles.push_back(math::vec4f(p[0], p[1], p[2], DROPLET_RAYMARCH_PARTICLE_RADIUS));
+      particles.push_back(math::vec4f(p[0], p[1], p[2], live.metaball_radius));
       max_dist = std::max(max_dist, length(p - droplet->center));
     }
 
@@ -1162,7 +1192,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
     particles.resize(MAX_DROPLET_RAYMARCH_PARTICLES, math::vec4f(0.0f));
 
-    float box_half = (max_dist + DROPLET_RAYMARCH_PARTICLE_RADIUS + DROPLET_INFLUENCE_RADIUS) * DROPLET_RAYMARCH_BOX_MARGIN;
+    float box_half = (max_dist + live.metaball_radius + live.influence) * DROPLET_RAYMARCH_BOX_MARGIN;
 
     droplet->hull_mesh->set_position(droplet->center);
     droplet->hull_mesh->set_scale(math::vec3f(box_half));
@@ -1174,8 +1204,8 @@ struct World::Impl: RigidBodyWorldCommonData
     props.set("particles", particles);
     props.set("particleCount", particle_count);
     props.set("dropletCenter", droplet->center);
-    props.set("influenceRadius", DROPLET_INFLUENCE_RADIUS);
-    props.set("isoThreshold", DROPLET_ISO_THRESHOLD);
+    props.set("influenceRadius", live.influence);
+    props.set("isoThreshold", live.iso);
     props.set("boxHalfExtent", box_half);
 
     droplet->hull_mesh->set_user_data(props);
@@ -1184,6 +1214,8 @@ struct World::Impl: RigidBodyWorldCommonData
   void update(float dt)
   {
     last_frame_time = clock();
+
+    refresh_live_tuning(); // pull droplet knobs from the in-page sliders (web)
 
       //debug dump
 
@@ -1540,7 +1572,7 @@ struct World::Impl: RigidBodyWorldCommonData
         //with velocity damping so the spring settles into a blob instead of oscillating
         if (distance > DROPLET_PARTICLE_MIN_INTERACTION_RADIUS)
         {
-          math::vec3f force = to_center * DROPLET_PARTICLE_FORCE - velocity * DROPLET_PARTICLE_DAMPING;
+          math::vec3f force = to_center * live.force - velocity * live.damping;
           particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
         }
 
