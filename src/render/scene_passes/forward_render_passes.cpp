@@ -59,7 +59,9 @@ struct ForwardLightingPass : IScenePass
       droplet_fluid_pass.set_rasterizer_state(RasterizerState(false));
       droplet_fluid_pass.set_clear_flags(Clear_None);
 
-      sky_pass.set_depth_stencil_state(DepthStencilState(true, true, CompareMode_Less));
+      // sky is pinned to the far plane (z = w in the shader); LessEqual lets it pass against the cleared
+      // background depth, and depth-write is off so it never occludes the scene at any camera distance
+      sky_pass.set_depth_stencil_state(DepthStencilState(true, false, CompareMode_LessEqual));
       sky_pass.set_rasterizer_state(RasterizerState(false));
       sky_pass.set_clear_flags(Clear_None);
 

@@ -1262,6 +1262,9 @@ struct World::Impl: RigidBodyWorldCommonData
   {
     last_frame_time = clock();
 
+    // keep the skybox centred on the camera so it reads as infinitely far (no parallax during movement)
+    sky->set_position(math::vec3f(camera->world_tm() * math::vec4f(0.0f, 0.0f, 0.0f, 1.0f)));
+
     refresh_live_tuning(); // pull droplet knobs from the in-page sliders (web)
 
       //debug dump
