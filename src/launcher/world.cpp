@@ -1011,22 +1011,49 @@ struct World::Impl: RigidBodyWorldCommonData
     }
   }
 
+  // Remove the oldest n droplet particles (front of droplet_particles == generation order) from both
+  // droplet_particles and the master phys_bodies, so ~PhysBodySync removes them from the Bullet world.
+  void retire_oldest_droplet_particles(size_t n)
+  {
+    if (n > droplet_particles.size())
+      n = droplet_particles.size();
+
+    if (!n)
+      return;
+
+    std::vector<PhysBodySync*> retiring;
+    retiring.reserve(n);
+
+    for (size_t i = 0; i < n; i++)
+      retiring.push_back(droplet_particles[i].get());
+
+    droplet_particles.erase(droplet_particles.begin(), droplet_particles.begin() + n);
+
+    phys_bodies.erase(std::remove_if(phys_bodies.begin(), phys_bodies.end(),
+      [&](const std::shared_ptr<PhysBodySync>& b) {
+        return std::find(retiring.begin(), retiring.end(), b.get()) != retiring.end();
+      }), phys_bodies.end());
+  }
+
   void generate_droplet()
   {
     if (!leaves.size())
       return;
 
-    if (droplet_particles.size() > MAX_PARTICLES_COUNT)
-      return;
-
     if (last_droplet_generated_time && last_frame_time - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
       return;
 
+    // Keep the total particle count bounded by recycling the OLDEST particles, rather than stopping
+    // generation. The old behaviour (skip when over MAX_PARTICLES_COUNT) let particles pile up to the
+    // cap and then stalled all new droplets, leaving the top leaf permanently empty after a while.
+    const size_t per_droplet = LAYERS_COUNT * PARALLELS_COUNT * MERIDIANS_COUNT;
+
+    if (droplet_particles.size() + per_droplet > MAX_PARTICLES_COUNT)
+      retire_oldest_droplet_particles(droplet_particles.size() + per_droplet - MAX_PARTICLES_COUNT);
+
     last_droplet_generated_time = last_frame_time;
 
-    //size_t leaf_index = rand() % leaves.size();
     size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
-
     Leaf& leaf = leaves[leaf_index];
 
     generate_droplet(leaf.initial_center + math::vec3f(0, 0.5, 0));
