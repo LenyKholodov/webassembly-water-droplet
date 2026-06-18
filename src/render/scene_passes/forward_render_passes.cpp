@@ -190,30 +190,32 @@ struct ForwardLightingPass : IScenePass
 
       RenderableMesh* renderable_mesh = RenderableMesh::get(mesh.mesh(), context);
 
-        //check for envmap (droplets) or planar reflection/refraction targets (water)
+        //metaball-raymarch droplets carry a per-node PropertyMap (their particle field); that marks
+        //them for the screen-space refraction + reflection-cubemap binding here and supplies their uniforms.
 
-      EnvironmentMap*  envmap   = EnvironmentMap::find(mesh);
-      WaterReflection* water_rt = WaterReflection::find(mesh);
+      common::PropertyMap* node_props = mesh.find_user_data<common::PropertyMap>();
+      EnvironmentMap*      envmap     = EnvironmentMap::find(mesh);
+      WaterReflection*     water_rt   = WaterReflection::find(mesh);
 
       TextureList prim_textures;
 
-      if (envmap)
+      if (node_props)
       {
-          //droplets: cubemap for reflection + the scene-behind texture for screen-space refraction
-        prim_textures.insert("environmentMap", envmap->portal_texture);
-
+          //droplet: screen-space refraction of the scene behind it (the leaf), plus a reflection cubemap
+          //from the per-droplet dynamic env-map if present, else the skybox carried by the droplet material.
         if (scene_refraction_texture)
           prim_textures.insert("refractionTexture", *scene_refraction_texture);
+
+        if (envmap)
+          prim_textures.insert("environmentMap", envmap->portal_texture);
       }
+      else if (envmap)
+        prim_textures = envmap->textures;
       else if (water_rt)
         prim_textures = water_rt->textures;
       else
         prim_textures = Pass::default_primitive_textures();
 
-        //per-node dynamic uniforms (metaball-raymarch droplets attach a PropertyMap with their
-        //particle field; everything else uses the pass defaults)
-
-      common::PropertyMap* node_props = mesh.find_user_data<common::PropertyMap>();
       const common::PropertyMap& prim_properties = node_props ? *node_props
                                                               : Pass::default_primitive_properties();
 

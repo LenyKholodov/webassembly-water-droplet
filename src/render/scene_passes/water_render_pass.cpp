@@ -74,8 +74,21 @@ class WaterReflectionPass : IScenePass
       reflection_options->excluded_nodes.insert(&*water); // never reflect the water itself (also stops recursion)
 
       for (auto& mesh : visitor.meshes())
+      {
         if (mesh->is_reflection_excluded())
           reflection_options->excluded_nodes.insert(&*mesh);
+
+          //metaball-raymarch droplets (marked by their per-node particle PropertyMap) sample THIS water
+          //pass's refraction texture in screen space. Keep them out of both nested renders: that texture
+          //isn't bound inside the nested pass (the water excludes itself), so rendering a droplet there
+          //throws "can't find refractionTexture", and it would also be a feedback dependency.
+          //In dynamic-cubemap mode they're already excluded above via is_environment_map_required.
+        if (mesh->find_user_data<common::PropertyMap>())
+        {
+          reflection_options->excluded_nodes.insert(&*mesh);
+          refraction_options->excluded_nodes.insert(&*mesh);
+        }
+      }
 
       WaterReflection* wr = WaterReflection::get(*water, context, WATER_RT_SIZE, WATER_RT_SIZE);
 

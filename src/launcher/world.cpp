@@ -31,8 +31,8 @@ const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.02f;    // centroid spring (raised: B1 removed the accidental Nx force multiplier, so the real value must bind on its own)
-const float DROPLET_PARTICLE_DAMPING = 0.008f; // velocity damping so the stronger spring doesn't oscillate/jitter
+const float DROPLET_PARTICLE_FORCE = 0.05f;    // centroid spring: raised so the (now 2x, smaller) particles bind into a tighter, more readable droplet
+const float DROPLET_PARTICLE_DAMPING = 0.012f; // velocity damping so the stronger spring settles instead of oscillating/jittering
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
@@ -54,12 +54,15 @@ const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f
 // environment cubemap for reflection/refraction; only the surface + normal differ. Toggle to A/B.
 const bool   DROPLET_RAYMARCH = true;
 const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
-const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = DROPLET_PARTICLE_RADIUS * 2.0f; // per-particle metaball sphere radius (main size knob)
-const float  DROPLET_INFLUENCE_RADIUS = 0.12f;                                 // smooth-min blend k: blobbiness / how aggressively particles merge
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = DROPLET_PARTICLE_RADIUS * 1.4f; // per-particle metaball sphere radius — smaller spheres, more of them (main size knob)
+const float  DROPLET_INFLUENCE_RADIUS = 0.10f;                                 // smooth-min blend k: blobbiness / how aggressively particles merge
 const float  DROPLET_ISO_THRESHOLD = 0.0f;                                     // surface iso level: inflate (+) / thin (-) (tuning)
 const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
-static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 1;
-const size_t MAX_PARTICLES_COUNT = 90;
+// Droplet reflection source: true -> the static skybox cubemap (cheap, consistent, and skips the
+// per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
+const bool   DROPLET_REFLECT_SKYBOX = true;
+static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 2; // LAYERS 1->2 doubles particles per droplet (25 -> 50)
+const size_t MAX_PARTICLES_COUNT = 180;                                  // 2x to leave room for the doubled per-droplet particle count
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
@@ -589,14 +592,22 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_material.set_textures(materials.find("mtl1")->textures());
     droplet_material.set_properties(materials.find("mtl1")->properties());
 
-    // metaball-raymarch droplet material: same env-cubemap-carrying setup, different shader
+    // metaball-raymarch droplet material. Refraction is the screen-space scene texture (bound per draw);
+    // reflection is the skybox cubemap (added below) or, in dynamic mode, the per-droplet env-map (per draw).
+    // The shader samples neither diffuseTexture nor material properties, so none are needed here.
     droplet_fluid_material.set_shader_tags("droplet_fluid");
-    droplet_fluid_material.set_textures(materials.find("mtl1")->textures());
-    droplet_fluid_material.set_properties(materials.find("mtl1")->properties());
 
     Texture sky_texture = render_device.create_texture_cubemap(SKY_TEXTURE_PATH);
 
     sky_texture.set_min_filter(TextureFilter_Linear);
+
+    // default: droplets reflect the static skybox cubemap (see DROPLET_REFLECT_SKYBOX).
+    // textures() is a const ref; copy the handle (shares impl) then insert, like the sky/water materials.
+    if (DROPLET_REFLECT_SKYBOX)
+    {
+      TextureList droplet_fluid_textures = droplet_fluid_material.textures();
+      droplet_fluid_textures.insert("environmentMap", sky_texture);
+    }
 
     TextureList sky_textures = sky_material.textures();
     sky_textures.insert("diffuseTexture", sky_texture);
@@ -1153,7 +1164,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
     droplet->hull_mesh->set_position(droplet->center);
     droplet->hull_mesh->set_scale(math::vec3f(box_half));
-    droplet->hull_mesh->set_environment_map_local_point(math::vec3f(0.0f)); // node sits at the centre -> cubemap eye = centre
+
+    if (!DROPLET_REFLECT_SKYBOX)
+      droplet->hull_mesh->set_environment_map_local_point(math::vec3f(0.0f)); // node sits at the centre -> dynamic cubemap eye = centre
 
     common::PropertyMap props;
     props.set("particles", particles);
@@ -1334,7 +1347,10 @@ struct World::Impl: RigidBodyWorldCommonData
 
       droplet->hull_mesh = scene::Mesh::create();
 
-      droplet->hull_mesh->set_environment_map_required(true); //require envmap prerendering
+      // per-droplet dynamic env-map prerendering; skipped when reflecting the static skybox (saves the
+      // whole-scene cubemap re-render per droplet). The hull path always uses the dynamic cubemap.
+      if (!DROPLET_RAYMARCH || !DROPLET_REFLECT_SKYBOX)
+        droplet->hull_mesh->set_environment_map_required(true);
 
       if (DROPLET_RAYMARCH)
         // proxy box (unit cube [-1,1]); positioned at the centre + scaled to enclose the metaball each frame.
