@@ -2,6 +2,8 @@
 
 **A WebAssembly/WebGL water-droplet simulation, written from scratch in C++.**
 
+▶ **[Play the live demo](https://lenykholodov.github.io/webassembly-water-droplet/)** — runs in your browser, no install.
+
 Droplet is a small, ambient tech demo: water droplets gather on the foliage of two
 ferns, run together into rounded blobs, and trickle down through the leaves — growing
 new ferns where they pool at the bottom. There's no score and no objective. You orbit
