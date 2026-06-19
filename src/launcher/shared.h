@@ -18,8 +18,11 @@ class World
     /// Destructor
     ~World();
 
-    /// Update world
-    void update();
+    /// Update world (dt = real seconds elapsed since the previous frame)
+    void update(float dt);
+
+    /// True when the follow (chase) camera is active -> caller should yield manual camera control
+    bool is_follow_camera() const;
 
     /// Input control
     void inputGrab(float ray_start_x, float ray_start_y, float ray_start_z, float ray_end_x, float ray_end_y, float ray_end_z);

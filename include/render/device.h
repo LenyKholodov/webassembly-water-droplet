@@ -339,6 +339,9 @@ class VertexBuffer
     /// Resize
     void resize(size_t vertices_count);
 
+    /// Promote to a dynamic (per-frame streamed) buffer so the driver stops treating it as write-once
+    void ensure_dynamic();
+
     /// Bind buffer
     void bind() const;
 

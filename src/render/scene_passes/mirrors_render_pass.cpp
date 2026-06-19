@@ -15,7 +15,8 @@ namespace passes {
 
 /// Constants
 
-static constexpr size_t MIRROR_TEXTURE_SIZE = 512; //mirrors texture size
+static constexpr size_t MIRROR_TEXTURE_SIZE = 256; //env-map cubemap face size (droplets are tiny on screen, so 256 is ample; was 512 -> 4x fewer face pixels)
+static constexpr size_t ENV_MAP_REFRESH_INTERVAL = 2; //re-render each droplet's cubemap every N frames (staggered) instead of every frame
 
 /// Test scene render pass component
 class MirrorsPrerenderPass : IScenePass
@@ -48,17 +49,31 @@ class MirrorsPrerenderPass : IScenePass
 
       visitor.traverse(*root_node, &context.options());
 
-        //process all mirrors
+        //process all mirrors. each cubemap persists in the entity's user data, so we can re-render it
+        //only every ENV_MAP_REFRESH_INTERVAL frames (staggered per entity to spread the load) and reuse
+        //the slightly-stale reflection in between - imperceptible on a small, fast-moving droplet. A
+        //brand-new env map is always rendered immediately so it's never black.
+
+      size_t env_index = 0;
 
       for (auto entity : visitor.prerender_entities())
       {
-        if (entity->is_environment_map_required())
+        if (!entity->is_environment_map_required())
+          continue;
+
+        bool first_time = EnvironmentMap::find(*entity) == nullptr;
+
+        if (first_time || (frame_counter + env_index) % ENV_MAP_REFRESH_INTERVAL == 0)
           prerender_environment_map(entity, context);
+
+        env_index++;
       }
+
+      frame_counter++;
 
         //clear data
 
-      visitor.reset();      
+      visitor.reset();
     }
 
     void prerender_environment_map(const Entity::Pointer& entity, ScenePassContext& context)
@@ -166,6 +181,7 @@ class MirrorsPrerenderPass : IScenePass
 
   private:
     SceneVisitor visitor;
+    size_t frame_counter = 0; //advances each prerender; drives the staggered env-map refresh throttle
 };
 
 struct MirrorsPrerenderPassComponent : Component

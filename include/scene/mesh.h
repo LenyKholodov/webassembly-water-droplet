@@ -24,6 +24,18 @@ class Entity: public Node
     /// Set environment map rendering local point
     void set_environment_map_local_point(const math::vec3f& point);
 
+    /// Planar reflection/refraction (a flat water/mirror surface)
+    bool is_planar_reflection_required() const;
+
+    /// Set planar reflection/refraction requirement
+    void set_planar_reflection_required(bool state);
+
+    /// Exclude this entity from planar reflection renders (e.g. below-water geometry that would occlude the mirror camera)
+    bool is_reflection_excluded() const;
+
+    /// Set reflection exclusion
+    void set_reflection_excluded(bool state);
+
   protected:
     /// Constructor
     Entity();

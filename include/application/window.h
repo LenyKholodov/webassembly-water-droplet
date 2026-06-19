@@ -165,6 +165,14 @@ class Window
     /// Window mouse position handler
     void set_mouse_move_handler(const MouseMoveHandler& mouse_move_handler);
 
+    /// Scroll/wheel handler (delta > 0 = wheel up). Desktop zoom.
+    typedef std::function<void (double delta)> WheelHandler;
+    void set_wheel_handler(const WheelHandler& wheel_handler);
+
+    /// Two-finger pinch handler (delta = change in finger distance in px; > 0 = fingers spread). Touch zoom.
+    typedef std::function<void (double distance_delta)> PinchHandler;
+    void set_pinch_handler(const PinchHandler& pinch_handler);
+
   private:
     struct Impl;
     std::shared_ptr<Impl> impl;

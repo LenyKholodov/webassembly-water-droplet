@@ -20,12 +20,15 @@ struct Mesh::Impl
   PrimitiveArray primitives;
   UserDataMap user_data_map;
   size_t update_transaction_id;
+  size_t topology_transaction_id; //bumped only when indices/primitives change, not on a vertex-only touch()
 
-  Impl() : update_transaction_id() {}
+  Impl() : update_transaction_id(), topology_transaction_id() {}
 
   uint32_t add_primitive(const char* material, PrimitiveType type, uint32_t first, uint32_t count, uint32_t base_vertex)
   {
     engine_check_null(material);
+
+    topology_transaction_id++;
 
     if (type < 0 || type >= PrimitiveType_Num)
       throw Exception(format("Can't add unknown primitive type %d", type).c_str());
@@ -238,6 +241,7 @@ uint32_t Mesh::indices_count() const
 void Mesh::indices_resize(uint32_t indices_count)
 {
   impl->indices_data.resize(indices_count);
+  impl->topology_transaction_id++;
 }
 
 const Mesh::index_type* Mesh::indices_data() const
@@ -311,6 +315,7 @@ void Mesh::remove_primitive(uint32_t primitive_index)
 void Mesh::remove_all_primitives()
 {
   impl->primitives.clear();
+  impl->topology_transaction_id++;
 }
 
 Mesh Mesh::merge(const Mesh& mesh) const
@@ -354,6 +359,11 @@ Mesh::UserDataPtr Mesh::find_user_data_core(const std::type_info& type) const
 size_t Mesh::update_transaction_id() const
 {
   return impl->update_transaction_id;
+}
+
+size_t Mesh::topology_transaction_id() const
+{
+  return impl->topology_transaction_id;
 }
 
 void Mesh::touch()

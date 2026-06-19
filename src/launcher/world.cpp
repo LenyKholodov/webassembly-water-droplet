@@ -8,11 +8,14 @@
 #include "btBulletDynamicsCommon.h"
 #include "BulletCollision/Gimpact/btGImpactShape.h"
 
-#include "hull/hull.h"
 
 #include <list>
 #include <ctime>
 #include <random>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 using namespace engine::common;
 using namespace engine::render::scene;
@@ -26,29 +29,42 @@ const char* PLANT_MESH = "media/meshes/fern.obj";
 const size_t CLUSTERIZE_STEPS_COUNT = 3;
 const float CLUSTERIZE_STEP_FACTOR = 1.2;
 const size_t PREFERRED_MAX_DROPLETS_COUNT = 3;
-const float DROPLET_PARTICLE_RADIUS = 0.05f;
+const float DROPLET_PARTICLE_RADIUS = 0.025f;
 const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.0004f;
+const float DROPLET_PARTICLE_FORCE = 0.13f;    // centroid spring (tuned); keep >~0.08 or droplets are too loose and slip THROUGH the leaf's thin static-mesh collider
+const float DROPLET_PARTICLE_DAMPING = 0.002f; // velocity damping (tuned)
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
-const float DROPLET_PARTICLE_MIN_FRICTION = 0.8;
-const float DROPLET_PARTICLE_MAX_FRICTION = 2;
+const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
+const float DROPLET_PARTICLE_MAX_FRICTION = 0.9;
 const float DROPLET_MIN_FRICTION_FACTOR = 0.2f;
 const float DROPLET_MAX_FRICTION_FACTOR = 2.;
 const size_t DROPLET_INITIAL_LEAF = 0;
 const float DROPLET_PARTICLE_LINEAR_SLEEPING_THRESHOLD = 1.f;
 const float DROPLET_PARTICLE_ANGULAR_SLEEPING_THRESHOLD = 1.f;
 const size_t DROPLET_CENTER_APPROXIMATION_STEPS_COUNT = 3;
-const size_t DROPLET_GENERATION_INTERVAL = 10 * CLOCKS_PER_SEC;
+const size_t DROPLET_GENERATION_INTERVAL = 5 * CLOCKS_PER_SEC;
 const size_t MIN_DROPLET_PARTICLES_COUNT = 10;
 const float MIN_DROPLET_PARTICLE_HEIGHT = -6.f;
 const size_t DROPLET_REMOVE_COUNTER_THRESHOLD = 30;
 const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f;
-static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5, LAYERS_COUNT = 1;
-const size_t MAX_PARTICLES_COUNT = 90;
+
+// Droplet surface: a metaball SDF raymarched in a fragment shader (true concavity/necking/merges,
+// exact normals), reflecting the skybox cubemap + screen-space refraction. (The old convex-hull +
+// Loop-subdivision surface was removed.)
+const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = 0.052f; // per-particle metaball sphere radius — the rendered sphere size (independent of the physical radius)
+const float  DROPLET_INFLUENCE_RADIUS = 0.13f;          // smooth-min blend k: bigger -> spheres merge into one coherent blob
+const float  DROPLET_ISO_THRESHOLD = -0.04f;            // surface iso level: inflate (+) / thin (-)
+const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
+// Droplet reflection source: true -> the static skybox cubemap (cheap, consistent, and skips the
+// per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
+const bool   DROPLET_REFLECT_SKYBOX = true;
+static size_t PARALLELS_COUNT = 5, MERIDIANS_COUNT = 5; // per-shell spawn grid; total particles = live particles/droplet
+const size_t MAX_PARTICLES_COUNT = 600;                                  // total particle budget (recycled oldest-first when exceeded)
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
@@ -63,6 +79,7 @@ const float GROUND_SIZE = 50.0f;
 const float GROUND_OFFSET = -7.f;
 
 const char* DROPLET_HULL_MATERIAL = "droplet";
+const char* DROPLET_FLUID_MATERIAL = "droplet_fluid";
 const int COLLISION_GROUP_DROPLET = 1;
 const int COLLISION_GROUP_GROUND = 1 << 1;
 const int COLLISION_GROUP_LEAF = 1 << 2;
@@ -73,8 +90,8 @@ const float DRAG_FORCE_MULTIPLIER = 10.f;
 const float DRAG_MAX_FORCE = 2.f;
 
 const math::vec3f LEAF_LIGHT_OFFSET(0, 0.5, 0);
-const float LIGHTS_MIN_INTENSITY = 0.7f;
-const float LIGHTS_MAX_INTENSITY = 0.9;
+const float LIGHTS_MIN_INTENSITY = 0.10f;
+const float LIGHTS_MAX_INTENSITY = 0.18;
 const float LIGHTS_MIN_RANGE = 2.5;
 const float LIGHTS_MAX_RANGE = 3.5;
 const math::vec3f LIGHTS_ATTENUATION(1, 1, 0.5);
@@ -90,14 +107,47 @@ const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
 
-const float WATER_SURFACE_SIZE = GROUND_SIZE * 5;
-const float WATER_SURFACE_OFFSET = GROUND_OFFSET - 0.1;
-const size_t WATER_SURFACE_GRID_SIZE = 128;
-const char* WATER_SURFACE_MATERIAL_NAME = DROPLET_HULL_MATERIAL;
+const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
+const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
+const float WATER_SURFACE_OFFSET = WATER_LEVEL;
+const size_t WATER_SURFACE_GRID_SIZE = 160;          // a bit denser so ripples stay smooth on the larger plane
+const float WATER_DEPTH = WATER_LEVEL - GROUND_OFFSET;  // depth of the pool over the platform (used to clamp wave troughs)
+const float WATER_HEIGHT_SCALE = 0.5f;               // small vertical displacement -> gentle ripples, no platform clipping
+const float WATER_NORMAL_STEEPNESS = 14.0f;          // how strongly droplet ripples perturb the normal (lowered -> lighter, softer chop)
+const float WATER_SPLASH_STRENGTH = 0.001f;          // per-particle droplet impact (a droplet = many particles, so they accumulate)
+const float WATER_SPLASH_MAX_DIP = 0.015f;            // cap the per-droplet dip -> a small, clearly-visible impact ring (well below the ~0.08 swell)
+const int   WATER_SPLASH_RADIUS = 1;                 // radius (in grid cells, ~3 world units each) of the impact ring -> a tiny, pin-point footprint (1 cell is the grid floor)
+const float WATER_AMBIENT_SPLASH_CHANCE = 0.05f;     // frequent but...
+const float WATER_AMBIENT_SPLASH_STRENGTH = 0.004f;  // ...tiny random ripples, like wind on water
+const float WATER_WAVE_SPEED = 0.25f;                // <1 slows wave propagation -> calm, relaxing water
+
+  //a permanent, always-animating swell layered under the droplet ripples so the surface always reads as living water
+const float WATER_SWELL_AMP1   = 0.05f;              // height of the primary swell (world units)
+const float WATER_SWELL_LEN1   = 15.0f;              // wavelength of the primary swell (world units)
+const float WATER_SWELL_SPEED1 = 1.1f;              // angular speed of the primary swell
+const float WATER_SWELL_AMP2   = 0.028f;             // secondary cross-swell, breaks up the regularity
+const float WATER_SWELL_LEN2   = 9.0f;
+const float WATER_SWELL_SPEED2 = 1.7f;
+const float WATER_SWELL_STEEPNESS = 2.2f;            // how strongly the swell tilts the normal (drives the gentle moving reflection)
+const float WATER_SWELL_TIME_STEP = 0.016f;          // swell clock advance per update (~one frame)
+const char* WATER_SURFACE_MATERIAL_NAME = "water";
 
 const char* SKY_MATERIAL = "sky";
 const float SKY_RADIUS = 100.0f;
-const char* SKY_TEXTURE_PATH = "media/textures/sky.png";
+const char* SKY_TEXTURE_PATH = "media/textures/sky.jpg";
+
+// Fireflies: small green additive glow spheres that rise around the tree, pulse, and wander,
+// each carrying a local green point light. Reference: real fireflies drift slowly upward with
+// a gentle wandering path and a soft on/off glow.
+const size_t FIREFLY_COUNT = 8;
+const float FIREFLY_RADIUS = 0.07f;
+const float FIREFLY_SPAWN_RADIUS = 3.2f;             // scattered around the tree
+const float FIREFLY_BOTTOM = GROUND_OFFSET + 0.5f;   // rise from near the water...
+const float FIREFLY_TOP = 2.5f;                      // ...up past the top of the tree
+const float FIREFLY_DRIFT = 1.1f;                    // horizontal wander amplitude
+const math::vec3f FIREFLY_COLOR(0.35f, 1.0f, 0.45f); // green
+const float FIREFLY_LIGHT_INTENSITY = 0.32f;         // soft local green lighting on leaves/droplets
+const float FIREFLY_LIGHT_RANGE = 2.8f;
 
 //todo: remove motion states from rigid bodies
 
@@ -159,7 +209,8 @@ struct PhysBodySync
     int collision_group,
     int collision_mask,
     const std::shared_ptr<btDiscreteDynamicsWorld>& dynamics_world)
-    : mesh(mesh)
+    : dynamics_world(dynamics_world) // was never stored -> the destructor dereferenced a null world (latent until bodies were actually destroyed)
+    , mesh(mesh)
     , shape(shape)
   {
     btTransform start_transform;
@@ -195,6 +246,7 @@ struct Leaf
   std::shared_ptr<btTypedConstraint> constraint;
   btTransform target_transform;
   math::vec3f initial_center;
+  math::vec3f local_center; // mesh centroid in body-local space, to spawn droplets at the leaf's CURRENT pose
   scene::PointLight::Pointer point_light;
 
   Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
@@ -214,16 +266,48 @@ struct PlantLight
   scene::PointLight::Pointer point_light;
 };
 
+// Live-tunable droplet knobs. Defaults are the compile-time constants; on the web they are overridden
+// each frame from window.DROPLET.* (the in-page sliders, see dist/index.html) so the look can be tuned
+// without a rebuild. Bake the final values back into the constants above when satisfied.
+struct LiveTuning
+{
+  float metaball_radius = DROPLET_RAYMARCH_PARTICLE_RADIUS;
+  float influence       = DROPLET_INFLUENCE_RADIUS;
+  float iso             = DROPLET_ISO_THRESHOLD;
+  float force           = DROPLET_PARTICLE_FORCE;
+  float damping         = DROPLET_PARTICLE_DAMPING;
+  int   particles_per_droplet = 30; // physics particles spawned per droplet (tuned)
+  float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
+
+  // follow camera (window.CAMERA.* in dist/index.html): a chase cam that trails the droplet holding the target particle
+  bool  cam_follow      = true;  // on by default; off -> normal free camera
+  float cam_distance    = 11.0f;  // steady comfortable trailing distance (world units) - calm overview, not zoomed-in
+  float cam_smooth      = 0.8f;  // follow responsiveness; lower = more inertia/lag (compensates fast impulses)
+  float cam_height      = 0.45f; // how high above the droplet the camera rides (up component of the offset dir)
+};
+
 struct Droplet
 {
   math::vec3f center;
   std::list<math::vec3f> prev_centers;
   std::vector<math::vec3f> points;
   std::vector<std::shared_ptr<PhysBodySync>> bodies;
-  HullBuilder hull_builder;
-  scene::Mesh::Pointer hull_mesh;
+  scene::Mesh::Pointer hull_mesh; // the droplet's proxy-box render node (name kept for minimal churn)
   scene::PointLight::Pointer point_light;
   size_t remove_counter = 0;
+};
+
+struct Firefly
+{
+  scene::Mesh::Pointer body;            // small green additive-glow sphere
+  scene::PointLight::Pointer light;     // local green light it carries
+  Material material;                    // per-firefly material (carries the "glowColor" uniform)
+  math::vec3f base;                     // x,z centre of its wandering path
+  float time_offset = 0;                // de-syncs the rise cycle between fireflies
+  float lifetime = 12;                  // seconds for one bottom->top rise
+  float pulse_speed = 2, pulse_phase = 0;
+  float drift_speed_x = 0.5f, drift_speed_z = 0.5f;
+  float drift_phase_x = 0, drift_phase_z = 0;
 };
 
 void find_nearest_point(
@@ -266,6 +350,10 @@ bool contact_added_callback (btManifoldPoint& contact_point,
   //We use only btRigidBody for collision objects, so safe to use static_cast here
   RigidBodyInfo *body0_info = (RigidBodyInfo*)object0->m_collisionObject->getUserPointer (),
                 *body1_info = (RigidBodyInfo*)object1->m_collisionObject->getUserPointer ();
+
+  //a body without RigidBodyInfo (e.g. a pure constraint anchor) must never be dereferenced
+  if (!body0_info || !body1_info)
+    return false;
 
   if (body0_info->collision_group != COLLISION_GROUP_LEAF && body1_info->collision_group != COLLISION_GROUP_LEAF)
   {
@@ -315,6 +403,16 @@ struct WaterSurface
   Field* n;
   media::geometry::Mesh mesh;
   scene::Mesh::Pointer mesh_node;
+  float swell_time = 0.0f; // clock for the permanent procedural swell
+
+  // Permanent swell height at world (wx,wz): two slow crossing traveling waves -> a gentle, never-still surface
+  static float swell_height(float wx, float wz, float t)
+  {
+    const float k1 = 6.2831853f / WATER_SWELL_LEN1;
+    const float k2 = 6.2831853f / WATER_SWELL_LEN2;
+    return WATER_SWELL_AMP1 * sinf(wx * k1 + t * WATER_SWELL_SPEED1)
+         + WATER_SWELL_AMP2 * sinf((wx * 0.7f + wz * 0.7f) * k2 + t * WATER_SWELL_SPEED2);
+  }
 
   WaterSurface()
   {
@@ -332,8 +430,8 @@ struct WaterSurface
     {
       for (size_t j=0; j<WATER_SURFACE_GRID_SIZE; j++, v++)
       {
-			  v->position  = math::vec3f(1.0f - 2.0f * i / float(WATER_SURFACE_GRID_SIZE), 0, 1.0f - 2.0f * j / float(WATER_SURFACE_GRID_SIZE));
-			  v->normal    = math::vec3f(0, 4.0f / float(WATER_SURFACE_GRID_SIZE), 0);
+          v->position  = math::vec3f(WATER_SURFACE_SIZE * (1.0f - 2.0f * i / float(WATER_SURFACE_GRID_SIZE)), 0, WATER_SURFACE_SIZE * (1.0f - 2.0f * j / float(WATER_SURFACE_GRID_SIZE)));
+          v->normal    = math::vec3f(0, 1, 0);
         v->color     = math::vec4f(1.0f);
         v->tex_coord = math::vec2f(j / float(WATER_SURFACE_GRID_SIZE), i / float(WATER_SURFACE_GRID_SIZE));
       }
@@ -361,57 +459,77 @@ struct WaterSurface
     mesh_node = scene::Mesh::create();
 
     mesh_node->set_mesh(mesh);
-    mesh_node->set_environment_map_required(true);
+    mesh_node->set_planar_reflection_required(true); // flat mirror: planar reflection + refraction render targets
     mesh_node->set_position(math::vec3f(0, WATER_SURFACE_OFFSET, 0));
-    mesh_node->set_scale(math::vec3f(WATER_SURFACE_SIZE, 2, WATER_SURFACE_SIZE));
+    mesh_node->set_scale(math::vec3f(1.0f)); // world scale is baked into the vertices, so the node stays uniform -> normals transform correctly
+  }
+
+  // Inject a ripple where a droplet hits the water. world_x/world_z are mapped back to the grid cell.
+  void splash(float world_x, float world_z, float strength)
+  {
+    int ci = int((1.0f - world_x / WATER_SURFACE_SIZE) * 0.5f * float(WATER_SURFACE_GRID_SIZE) + 0.5f);
+    int cj = int((1.0f - world_z / WATER_SURFACE_SIZE) * 0.5f * float(WATER_SURFACE_GRID_SIZE) + 0.5f);
+
+    const int R = WATER_SPLASH_RADIUS;
+    for (int di=-R; di<=R; di++)
+      for (int dj=-R; dj<=R; dj++)
+      {
+        int i = ci + di, j = cj + dj;
+        if (i < 1 || i >= int(WATER_SURFACE_GRID_SIZE) - 1 || j < 1 || j >= int(WATER_SURFACE_GRID_SIZE) - 1)
+          continue;
+        float falloff = 1.0f - float(di*di + dj*dj) / float(R*R + 1); // smooth, peak = strength at the center
+        if (falloff < 0.0f) continue;
+        float& u = n->U[i][j];
+        u -= falloff * strength;                              // a dip seeds an outward-propagating ring
+        if (u < -WATER_SPLASH_MAX_DIP) u = -WATER_SPLASH_MAX_DIP; // ...but overlapping impacts of one droplet's particles can't dig a deep crater
+      }
   }
 
   void update()
   {
-      //add noise
+      //integrate the wave equation; ripples come from droplet impacts (splash()) plus an occasional faint random one
 
-    int i1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
-    int j1 = rand() % (WATER_SURFACE_GRID_SIZE - 5);
+    if (frand() < WATER_AMBIENT_SPLASH_CHANCE)
+      splash(crand() * WATER_SURFACE_SIZE * 0.85f, crand() * WATER_SURFACE_SIZE * 0.85f, WATER_AMBIENT_SPLASH_STRENGTH);
 
-    if (rand() % 50 ==0)
-    {
-      for(int i=-3; i<4; i++)
-      {
-        for(int j=-3; j<4; j++)
-        {
-          float v=6.0f-i*i-j*j;
+    swell_time += WATER_SWELL_TIME_STEP; // advance the permanent swell
 
-          if(v<0.0f)
-            v=0.0f;
+    const float MIN_HEIGHT = -(WATER_DEPTH - 0.15f); // keep wave troughs just above the submerged platform
+    const float CELL = 2.0f * WATER_SURFACE_SIZE / float(WATER_SURFACE_GRID_SIZE); // world distance between adjacent grid cells
 
-          n->U[i+i1+3][j+j1+3] -= v*0.004f;
-        }
-      }
-    }
-
-      //laplass pass
-
-    Vertex* v = mesh.vertices_data();
+    Vertex* verts = mesh.vertices_data();
 
     for (size_t i=1; i<WATER_SURFACE_GRID_SIZE-1; i++)
     {
-      for (size_t j=1; j<WATER_SURFACE_GRID_SIZE-1; j++, v++)
+      for (size_t j=1; j<WATER_SURFACE_GRID_SIZE-1; j++)
       {
-        v->position.y = n->U[i][j];
-        v->normal.x   = n->U[i-1][j]-n->U[i+1][j];
-        v->normal.y   = 4.0f / float(WATER_SURFACE_GRID_SIZE);
-        v->normal.z   = n->U[i][j-1]-n->U[i][j+1];
-        v->normal     = normalize(v->normal);
+        //grid cell (i,j) lives at vertex i*N+j (matching the constructor's row-major layout)
+        Vertex* v = &verts[i * WATER_SURFACE_GRID_SIZE + j];
 
-        //constexpr float VIS = 0.005f;
-        constexpr float VIS = 0.075f;
+        //permanent swell: sample height + neighbours (x decreases as i grows, z decreases as j grows -> matches the splash differences below)
+        float wx = v->position.x, wz = v->position.z;
+        float S   = swell_height(wx, wz, swell_time);
+        float Sim = swell_height(wx + CELL, wz, swell_time); // i-1
+        float Sip = swell_height(wx - CELL, wz, swell_time); // i+1
+        float Sjm = swell_height(wx, wz + CELL, swell_time); // j-1
+        float Sjp = swell_height(wx, wz - CELL, swell_time); // j+1
+
+        float h = n->U[i][j] * WATER_HEIGHT_SCALE + S;
+        v->position.y = h < MIN_HEIGHT ? MIN_HEIGHT : h;
+        v->normal.x   = (n->U[i-1][j]-n->U[i+1][j]) * WATER_NORMAL_STEEPNESS + (Sim - Sip) * WATER_SWELL_STEEPNESS;
+        v->normal.y   = 1.0f;
+        v->normal.z   = (n->U[i][j-1]-n->U[i][j+1]) * WATER_NORMAL_STEEPNESS + (Sjm - Sjp) * WATER_SWELL_STEEPNESS;
+        // no CPU normalize: the water shader normalizes worldNormal, and the node scale is uniform, so
+        // direction is preserved -> save ~25k sqrt/frame
+
+        constexpr float VIS = 0.110f; // higher viscosity -> droplet ripples attenuate (fade) faster
 
         float laplas=(n->U[i-1][j]+
                     n->U[i+1][j]+
                 n->U[i][j+1]+
                 n->U[i][j-1])*0.25f-n->U[i][j];
 
-        p->U[i][j] = ((2.0f-VIS) * n->U[i][j] - p->U[i][j] * (1.0f-VIS) + laplas);
+        p->U[i][j] = ((2.0f-VIS) * n->U[i][j] - p->U[i][j] * (1.0f-VIS) + laplas * WATER_WAVE_SPEED);
       }
     }
 
@@ -433,6 +551,10 @@ struct World::Impl: RigidBodyWorldCommonData
   media::geometry::Model plant_model;
   scene::Node::Pointer scene_root;
   scene::Camera::Pointer camera;
+  math::vec3f follow_cam_pos;   // smoothed chase-camera position (follow mode)
+  math::vec3f follow_look;      // smoothed look-at target (follow mode)
+  bool follow_init = false;     // false -> snap to the droplet on (re)enable
+  std::weak_ptr<PhysBodySync> follow_particle; // the tracked particle; we follow whichever droplet holds it until it dies
   std::shared_ptr<btDefaultCollisionConfiguration> collision_configuration;
   std::shared_ptr<btCollisionDispatcher> dispatcher;
   std::shared_ptr<btBroadphaseInterface> broadphase;
@@ -449,7 +571,9 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
   Material droplet_material;
+  Material droplet_fluid_material;
   Material sky_material;
+  Material water_material;
   std::vector<std::shared_ptr<Plant>> plants;
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
@@ -463,6 +587,8 @@ struct World::Impl: RigidBodyWorldCommonData
   size_t fallen_droplet_particles_count = 0;
   WaterSurface water_surface;
   scene::Mesh::Pointer sky;
+  std::vector<Firefly> fireflies;
+  LiveTuning live; // droplet knobs, refreshed from the in-page sliders each frame (web)
 
   Impl(scene::Node::Pointer scene_root, SceneRenderer& scene_renderer, const scene::Camera::Pointer& camera)
     : leaf_model(media::geometry::MeshFactory::load_obj_model(LEAF_MESH))
@@ -493,17 +619,37 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_material.set_textures(materials.find("mtl1")->textures());
     droplet_material.set_properties(materials.find("mtl1")->properties());
 
+    // metaball-raymarch droplet material. Refraction is the screen-space scene texture (bound per draw);
+    // reflection is the skybox cubemap (added below) or, in dynamic mode, the per-droplet env-map (per draw).
+    // The shader samples neither diffuseTexture nor material properties, so none are needed here.
+    droplet_fluid_material.set_shader_tags("droplet_fluid");
+
     Texture sky_texture = render_device.create_texture_cubemap(SKY_TEXTURE_PATH);
 
     sky_texture.set_min_filter(TextureFilter_Linear);
+
+    // default: droplets reflect the static skybox cubemap (see DROPLET_REFLECT_SKYBOX).
+    // textures() is a const ref; copy the handle (shares impl) then insert, like the sky/water materials.
+    if (DROPLET_REFLECT_SKYBOX)
+    {
+      TextureList droplet_fluid_textures = droplet_fluid_material.textures();
+      droplet_fluid_textures.insert("environmentMap", sky_texture);
+    }
 
     TextureList sky_textures = sky_material.textures();
     sky_textures.insert("diffuseTexture", sky_texture);
 
     sky_material.set_shader_tags("sky");
 
+    // the water surface reflects the sky cubemap directly (no scene env-map -> no parallax smearing on the flat plane)
+    water_material.set_shader_tags("water");
+    TextureList water_textures = water_material.textures();
+    water_textures.insert("skyTexture", sky_texture);
+
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
+    materials.insert(DROPLET_FLUID_MATERIAL, droplet_fluid_material);
     materials.insert(SKY_MATERIAL, sky_material);
+    materials.insert(WATER_SURFACE_MATERIAL_NAME, water_material);
 
       //scale meshes
 
@@ -536,10 +682,84 @@ struct World::Impl: RigidBodyWorldCommonData
     sky->bind_to_parent(*scene_root);
 
     setup_ground();
+    setup_fireflies(scene_renderer);
 
     if (!gContactAddedCallback)
     {
       gContactAddedCallback = contact_added_callback;
+    }
+  }
+
+  void setup_fireflies(SceneRenderer& scene_renderer)
+  {
+    static const float TWO_PI = 6.2831853f;
+    MaterialList materials = scene_renderer.materials();
+
+    for (size_t i = 0; i < FIREFLY_COUNT; i++)
+    {
+      Firefly f;
+
+      std::string name = "firefly_" + std::to_string(i);
+
+      f.material.set_shader_tags("firefly");
+      PropertyMap fprops = f.material.properties();
+      fprops.set("glowColor", math::vec3f(0.0f)); // start invisible
+      materials.insert(name.c_str(), f.material);
+
+      f.body = scene::Mesh::create();
+      f.body->set_mesh(media::geometry::MeshFactory::create_sphere(name.c_str(), FIREFLY_RADIUS));
+      f.body->bind_to_parent(*scene_root);
+
+      f.light = scene::PointLight::create();
+      f.light->set_light_color(FIREFLY_COLOR);
+      f.light->set_attenuation(LIGHTS_ATTENUATION);
+      f.light->set_intensity(0.0f);
+      f.light->set_range(FIREFLY_LIGHT_RANGE);
+      f.light->bind_to_parent(*scene_root);
+
+      float ang = frand() * TWO_PI;
+      float rad = FIREFLY_SPAWN_RADIUS * sqrt(frand());
+      f.base = math::vec3f(cos(ang) * rad, 0.0f, sin(ang) * rad);
+      f.time_offset   = frand() * 100.0f;
+      f.lifetime      = crand(9.0f, 17.0f);
+      f.pulse_speed   = crand(1.5f, 3.5f);
+      f.pulse_phase   = frand() * TWO_PI;
+      f.drift_speed_x = crand(0.25f, 0.6f);
+      f.drift_speed_z = crand(0.25f, 0.6f);
+      f.drift_phase_x = frand() * TWO_PI;
+      f.drift_phase_z = frand() * TWO_PI;
+
+      fireflies.push_back(f);
+    }
+  }
+
+  void update_fireflies()
+  {
+    float t = last_frame_time / float(CLOCKS_PER_SEC);
+
+    for (Firefly& f : fireflies)
+    {
+      float life = (t + f.time_offset) / f.lifetime;
+      life = life - floor(life);                                  // 0..1 rise cycle
+
+      float y = FIREFLY_BOTTOM + (FIREFLY_TOP - FIREFLY_BOTTOM) * life;
+      float x = f.base.x + sin(t * f.drift_speed_x + f.drift_phase_x) * FIREFLY_DRIFT;
+      float z = f.base.z + sin(t * f.drift_speed_z + f.drift_phase_z) * FIREFLY_DRIFT;
+
+      float pulse = 0.45f + 0.55f * sin(t * f.pulse_speed + f.pulse_phase);
+      float fade  = 1.0f;                                         // appear/disappear via transparency
+      if (life < 0.12f)      fade = life / 0.12f;
+      else if (life > 0.85f) fade = (1.0f - life) / 0.15f;
+
+      float glow = pulse * fade;
+      if (glow < 0.0f) glow = 0.0f;
+
+      math::vec3f pos(x, y, z);
+      f.body->set_position(pos);
+      PropertyMap fprops = f.material.properties();
+      fprops.set("glowColor", FIREFLY_COLOR * glow);
+      f.light->set_position(pos);
+      f.light->set_intensity(FIREFLY_LIGHT_INTENSITY * glow);
     }
   }
 
@@ -588,9 +808,21 @@ struct World::Impl: RigidBodyWorldCommonData
       //graphics
 
     scene::Mesh::Pointer floor = scene::Mesh::create();
-    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", GROUND_SIZE, 0.01f, GROUND_SIZE);
+
+    // the visible platform extends far past the physics ground so it reads as a plane reaching the horizon
+    const float FLOOR_VISUAL_SIZE = GROUND_SIZE * 6.0f;
+    media::geometry::Mesh floor_mesh = media::geometry::MeshFactory::create_box("mtl1", FLOOR_VISUAL_SIZE, 0.01f, FLOOR_VISUAL_SIZE);
+
+    // tile the brick texture so it stays detailed across the enlarged platform instead of stretching
+    {
+      const float tiles = FLOOR_VISUAL_SIZE / GROUND_SIZE;
+      media::geometry::Vertex* fv = floor_mesh.vertices_data();
+      for (size_t i=0, c=floor_mesh.vertices_count(); i<c; i++, fv++)
+        fv->tex_coord *= tiles;
+    }
 
     floor->set_mesh(floor_mesh);
+    floor->set_reflection_excluded(true); // submerged platform must not occlude the mirror camera in the water reflection
     floor->bind_to_parent(*scene_root);
 
       //physics
@@ -671,28 +903,20 @@ struct World::Impl: RigidBodyWorldCommonData
             indices.push_back(new_index);
           }
 
-          std::unique_ptr<btTriangleMesh> triangle_mesh(new btTriangleMesh (true, false));
-
-          triangle_mesh->preallocateIndices(indices.size());
-          triangle_mesh->preallocateVertices(vertices.size());
+          // A leaf is a thin, roughly-convex blade. Use a convex hull instead of btBvhTriangleMeshShape:
+          // the triangle-mesh shape is static-only (wrong for a dynamic body) and yields no usable inertia,
+          // whereas a hull collides correctly AND gives a proper anisotropic inertia tensor (see below).
+          btConvexHullShape* hull = new btConvexHullShape();
 
           const math::vec3f* vertex = &vertices[0];
-          size_t vertices_count = vertices.size();
-      
-          for (size_t i=0; i<vertices_count; i++, vertex++)
-            triangle_mesh->findOrAddVertex(btVector3((*vertex)[0], (*vertex)[1], (*vertex)[2]), false);
-          
-          index = &indices[0];
+          for (size_t i=0, vertices_count=vertices.size(); i<vertices_count; i++, vertex++)
+            hull->addPoint(btVector3((*vertex)[0], (*vertex)[1], (*vertex)[2]), false);
 
-          for (size_t i=0, count=indices.size(); i<count; i++, index++)
-            triangle_mesh->addIndex(*index);
+          hull->recalcLocalAabb();
 
-          triangle_mesh->getIndexedMeshArray()[0].m_numTriangles += primitive.count;
+          engine_log_debug("leaf convex hull shape '%s' (%u points)", primitive.name.c_str(), vertices.size());
 
-          engine_log_debug("btBvhTriangleMeshShape phys mesh shape '%s' (%u vertices, %u indices)", primitive.name.c_str(), vertices.size(), indices.size());
-
-          shape = std::shared_ptr<btCollisionShape>(new btBvhTriangleMeshShape(triangle_mesh.release(), true, true));
-          //shape = std::shared_ptr<btCollisionShape>(new btGImpactMeshShape(triangle_mesh.release()));
+          shape = std::shared_ptr<btCollisionShape>(hull);
 
           //shape->setMargin(COLLISION_MARGIN);
 
@@ -701,8 +925,10 @@ struct World::Impl: RigidBodyWorldCommonData
 
           //create leaf
 
-        btVector3 bt_local_inertia(1, 1, 1);
-        bt_local_inertia *= LEAF_MASS;
+        // proper inertia from the hull (thin in the leaf-normal axis -> anisotropic), instead of a hardcoded
+        // isotropic (1,1,1)*mass that made a flat leaf tumble like a uniform sphere
+        btVector3 bt_local_inertia(0, 0, 0);
+        shape->calculateLocalInertia(LEAF_MASS, bt_local_inertia);
         math::vec3f local_inertia(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
 
         phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, position, rotation, mesh, COLLISION_GROUP_LEAF, COLLISION_MASK_LEAF, dynamics_world));
@@ -741,28 +967,20 @@ struct World::Impl: RigidBodyWorldCommonData
         }
 
         initial_center /= indices_count;
-        initial_center  = rotation * initial_center + position;
+        math::vec3f local_center = initial_center;             // body-local mesh centroid (before placement)
+        initial_center  = rotation * initial_center + position; // world centroid at init
 
         Leaf leaf(last_frame_time, *this);
 
-          //configure light
-
-        leaf.point_light = scene::PointLight::create();
-
-        leaf.point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
-        leaf.point_light->set_attenuation(LIGHTS_ATTENUATION);
-        leaf.point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
-        leaf.point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
-
-        //leaf.point_light->bind_to_parent(*leaf.phys_body->mesh);
-        leaf.point_light->set_position(initial_center + LEAF_LIGHT_OFFSET);
-        leaf.point_light->bind_to_parent(*scene_root);
+          //no per-leaf lights: the tree is lit by the soft moonlight (the flying spot) instead, to
+          //avoid the over-lit/bioluminescent look and keep a soft mysterious night mood.
 
           //configure leaf constraint
 
         leaf.phys_body = phys_bodies.back();
         leaf.target_transform = leaf.phys_body->body->getWorldTransform();
         leaf.initial_center = initial_center;
+        leaf.local_center   = local_center;
 
         leaf.phys_body->body->setUserPointer(leaf.rigid_body_info.get());
 
@@ -782,7 +1000,9 @@ struct World::Impl: RigidBodyWorldCommonData
         rb_info.m_startWorldTransform = start_transform;
         leaf.static_bind_body = std::make_shared<btRigidBody>(rb_info);
 
-        dynamics_world->addRigidBody(leaf.static_bind_body.get());
+        //pure constraint anchor: give it no user pointer, so register it to collide with nothing
+        //(mask 0) — otherwise a droplet touching it fires the contact callback with a null RigidBodyInfo
+        dynamics_world->addRigidBody(leaf.static_bind_body.get(), COLLISION_GROUP_LEAF, 0);
 
         btVector3 static_bind_anchor(0, 0, 0);
         btVector3 leaf_anchor(pivot_point[0], pivot_point[1], pivot_point[2]);
@@ -797,54 +1017,97 @@ struct World::Impl: RigidBodyWorldCommonData
     }
   }
 
+  // Remove the oldest n droplet particles (front of droplet_particles == generation order) from both
+  // droplet_particles and the master phys_bodies, so ~PhysBodySync removes them from the Bullet world.
+  void retire_oldest_droplet_particles(size_t n)
+  {
+    if (n > droplet_particles.size())
+      n = droplet_particles.size();
+
+    if (!n)
+      return;
+
+    std::vector<PhysBodySync*> retiring;
+    retiring.reserve(n);
+
+    for (size_t i = 0; i < n; i++)
+      retiring.push_back(droplet_particles[i].get());
+
+    droplet_particles.erase(droplet_particles.begin(), droplet_particles.begin() + n);
+
+    phys_bodies.erase(std::remove_if(phys_bodies.begin(), phys_bodies.end(),
+      [&](const std::shared_ptr<PhysBodySync>& b) {
+        return std::find(retiring.begin(), retiring.end(), b.get()) != retiring.end();
+      }), phys_bodies.end());
+  }
+
   void generate_droplet()
   {
     if (!leaves.size())
       return;
 
-    if (droplet_particles.size() > MAX_PARTICLES_COUNT)
-      return;
-
     if (last_droplet_generated_time && last_frame_time - last_droplet_generated_time < DROPLET_GENERATION_INTERVAL)
       return;
 
+    // Keep the total particle count bounded by recycling the OLDEST particles, rather than stopping
+    // generation. The old behaviour (skip when over MAX_PARTICLES_COUNT) let particles pile up to the
+    // cap and then stalled all new droplets, leaving the top leaf permanently empty after a while.
+    const size_t per_droplet = (size_t) std::max(1, live.particles_per_droplet);
+
+    if (droplet_particles.size() + per_droplet > MAX_PARTICLES_COUNT)
+      retire_oldest_droplet_particles(droplet_particles.size() + per_droplet - MAX_PARTICLES_COUNT);
+
     last_droplet_generated_time = last_frame_time;
 
-    //size_t leaf_index = rand() % leaves.size();
     size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
-
     Leaf& leaf = leaves[leaf_index];
 
-    generate_droplet(leaf.initial_center + math::vec3f(0, 0.5, 0));
+    // Spawn above the leaf's CURRENT centroid. The leaf moves/tilts over time (physics + particle
+    // impacts), so spawning at the stale initial centre dropped droplets into empty air where the leaf
+    // used to be -> nothing landed -> "no droplets after a while".
+    btVector3 lc(leaf.local_center[0], leaf.local_center[1], leaf.local_center[2]);
+    btVector3 c = leaf.phys_body->body->getWorldTransform() * lc;
+    math::vec3f spawn(c.x(), c.y() + 0.5f, c.z());
+
+    generate_droplet(spawn);
   }
 
   void generate_droplet(const math::vec3f& droplet_center)
   {
     float friction_factor = crand(DROPLET_MIN_FRICTION_FACTOR, DROPLET_MAX_FRICTION_FACTOR);
 
-    for (size_t i=0; i<LAYERS_COUNT; i++)
+    // (re)build the per-particle collision shape at the current physical radius, so new droplets pick up
+    // the live "physical radius" slider. Existing particles keep their own shape (shared_ptr) -> stable.
+    droplet_particle_shape.reset(new btSphereShape(btScalar(live.physical_radius)));
+    btVector3 bt_local_inertia(0, 0, 0);
+    droplet_particle_shape->calculateLocalInertia(DROPLET_PARTICLE_MASS, bt_local_inertia);
+    droplet_particle_local_intertia = math::vec3f(bt_local_inertia.getX(), bt_local_inertia.getY(), bt_local_inertia.getZ());
+
+    // generate exactly live.particles_per_droplet particles, distributed over concentric shells in a
+    // small ball whose radius scales with the physical radius (was DROPLET_RADIUS/8 = physical*2.5).
+    const int   target      = std::max(1, live.particles_per_droplet);
+    const float ball_radius = live.physical_radius * 20.0f / 8.0f;
+    const size_t per_shell  = PARALLELS_COUNT * MERIDIANS_COUNT;
+    const size_t layers     = (target + per_shell - 1) / per_shell;
+
+    static const float PI2 = 3.1415926f * 2.0f;
+    int made = 0;
+
+    for (size_t i = 0; i < layers && made < target; i++)
     {
-      float radius = float(i+1) / LAYERS_COUNT * DROPLET_RADIUS / 8.0;
+      float radius = float(i + 1) / layers * ball_radius;
 
-      for (size_t j=0; j<PARALLELS_COUNT; j++)
+      for (size_t j = 0; j < PARALLELS_COUNT && made < target; j++)
       {
-        static float PI2 = 3.1415926f * 2.0f;
-
         float angle1 = float(j) / PARALLELS_COUNT * PI2;
-        float rel_y = cos(angle1);
-        //float rel_y = float(j+1) / PARALLELS_COUNT;
+        float y      = 2.0f * (cos(angle1) - 0.5f) * radius;
 
-        rel_y = 2.0f * (rel_y - 0.5f);
-
-        float y = rel_y * radius;
-
-        for (size_t k=0; k<MERIDIANS_COUNT; k++)
+        for (size_t k = 0; k < MERIDIANS_COUNT && made < target; k++)
         {
           float angle2 = float(k) / MERIDIANS_COUNT * PI2;
-
           math::vec3f position(cos(angle2) * radius, y, sin(angle2) * radius);
-
           generate_droplet_particle(position + droplet_center, friction_factor);
+          made++;
         }
       }
     }
@@ -852,12 +1115,14 @@ struct World::Impl: RigidBodyWorldCommonData
 
   void generate_droplet_particle(const math::vec3f& offset, float friction_factor)
   {
-    scene::Mesh::Pointer mesh = scene::Mesh::create();
-
-    mesh->set_mesh(droplet_debug_particle_mesh);
+    scene::Mesh::Pointer mesh; // particles are never rendered unless debug-drawing -> don't allocate/sync a scene mesh
 
     if (DROPLET_DEBUG_DRAW)
+    {
+      mesh = scene::Mesh::create();
+      mesh->set_mesh(droplet_debug_particle_mesh);
       mesh->bind_to_parent(*scene_root);
+    }
 
     phys_bodies.push_back(std::make_shared<PhysBodySync>(droplet_particle_shape, DROPLET_PARTICLE_MASS, droplet_particle_local_intertia, offset, math::quatf(), mesh, COLLISION_GROUP_DROPLET, COLLISION_MASK_DROPLET, dynamics_world));
 
@@ -926,9 +1191,185 @@ struct World::Impl: RigidBodyWorldCommonData
     plants.push_back(plant);
   }
 
-  void update()
+  int last_substeps = 0; // number of fixed physics substeps run this frame (drives the water at the same rate)
+
+  // Pull live droplet knobs from the in-page sliders (window.DROPLET.*) once per frame; each falls back
+  // to its compile-time constant when the slider/page hasn't set it. No-op off the web.
+  void refresh_live_tuning()
+  {
+#ifdef __EMSCRIPTEN__
+    live.metaball_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.metaballRadius != null) ? window.DROPLET.metaballRadius : $0; }, (double) DROPLET_RAYMARCH_PARTICLE_RADIUS);
+    live.influence       = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.influence      != null) ? window.DROPLET.influence      : $0; }, (double) DROPLET_INFLUENCE_RADIUS);
+    live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
+    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
+    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
+    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 30);
+    live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
+
+    live.cam_follow      = EM_ASM_INT   ({ return (window.CAMERA && window.CAMERA.follow != null)     ? (window.CAMERA.follow ? 1 : 0) : $0; }, 1) != 0;
+    live.cam_distance    = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.distance   != null) ? window.CAMERA.distance   : $0; }, 11.0);
+    live.cam_smooth      = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.smooth     != null) ? window.CAMERA.smooth     : $0; }, 0.8);
+    live.cam_height      = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.height     != null) ? window.CAMERA.height     : $0; }, 0.45);
+#endif
+  }
+
+  // True when the follow (chase) camera is enabled -> main.cpp yields keyboard/mouse camera control to World.
+  bool is_follow_camera() const { return live.cam_follow; }
+
+  // Smoothly trail the droplet that holds the tracked particle: frame it small + centred, sit a bit
+  // above/behind, and lag fast moves. The tracked particle is kept until it dies (falls/destroyed),
+  // then a fresh one is picked - so the camera commits to a droplet instead of hopping to the largest.
+  void update_follow_camera(float dt)
+  {
+    if (!live.cam_follow)
+    {
+      follow_init = false;
+      return;
+    }
+
+      //keep a live target particle; re-pick only once the current one is gone
+
+    std::shared_ptr<PhysBodySync> particle = follow_particle.lock();
+    bool alive = particle && particle->droplet_particle && !particle->droplet_particle->fallen;
+
+    if (!alive)
+    {
+      // Prefer a droplet that has dropped below the canopy (y < 0 = below the tree base, so clear of
+      // foliage) and is highest among those - i.e. just started falling, so we ride the whole clean fall.
+      // Fall back to the lowest droplet overall if nothing is below the canopy yet.
+      const float CANOPY_BOTTOM = 0.0f;
+      Droplet* pick = nullptr;
+      for (auto& d : droplets)
+        if (!d->bodies.empty() && d->center.y < CANOPY_BOTTOM && (!pick || d->center.y > pick->center.y))
+          pick = d.get();
+      if (!pick)
+        for (auto& d : droplets)
+          if (!d->bodies.empty() && (!pick || d->center.y < pick->center.y))
+            pick = d.get();
+
+      particle = (pick && !pick->bodies.empty()) ? pick->bodies.front() : nullptr;
+      follow_particle = particle;
+    }
+
+    if (!particle)
+    {
+      follow_init = false; // nothing to follow yet (no droplets) -> hold
+      return;
+    }
+
+      //follow whichever droplet currently contains the tracked particle (else the particle itself)
+
+    Droplet* target = nullptr;
+    for (auto& d : droplets)
+      for (auto& b : d->bodies)
+        if (b.get() == particle.get()) { target = d.get(); break; }
+
+    math::vec3f center;
+    float radius;
+
+    if (target && !target->points.empty())
+    {
+      center = target->center;
+      radius = live.metaball_radius;
+      for (const math::vec3f& p : target->points)
+        radius = std::max(radius, length(p - center) + live.metaball_radius);
+    }
+    else
+    {
+      btVector3 o = particle->body->getWorldTransform().getOrigin();
+      center = math::vec3f(o.getX(), o.getY(), o.getZ());
+      radius = live.metaball_radius * 3.0f;
+    }
+
+      //CALM OVERVIEW: hold a steady comfortable distance (no zooming onto a tiny droplet) and a high
+      //vantage so the camera rides above the leaf canopy (foliage stays below the sight line), aiming a
+      //touch below the droplet toward where it's heading (the platform/water) so it sits upper-centre.
+
+    float dist = std::max(live.cam_distance, radius * 4.0f); // steady distance; never closer than the blob needs
+
+    math::vec3f offset_dir = normalize(math::vec3f(0.7f, std::max(0.3f, live.cam_height), 0.7f)); // mostly above + a bit behind
+    math::vec3f desired     = center + offset_dir * dist;
+    math::vec3f look_at     = center - math::vec3f(0.0f, dist * 0.16f, 0.0f); // lead toward the fall path
+
+    if (!follow_init)
+    {
+      follow_cam_pos = desired;
+      follow_look    = look_at;
+      follow_init    = true;
+    }
+    else
+    {
+      float a = 1.0f - std::exp(-std::max(0.1f, live.cam_smooth) * dt); // exponential smoothing -> inertia
+      follow_cam_pos += (desired - follow_cam_pos) * a;
+      follow_look    += (look_at - follow_look)    * a;
+    }
+
+    camera->set_position(follow_cam_pos);
+    camera->world_look_to(follow_look, math::vec3f(0.0f, 1.0f, 0.0f));
+  }
+
+  // Metaball-raymarch surface update for one droplet: position+scale the proxy box to enclose the
+  // particle cluster, and upload the particle field (centres+radius) as per-node shader uniforms.
+  // Replaces the convex-hull build for raymarch droplets; the cubemap reflection/refraction is
+  // unchanged (rendered from the droplet centre as before).
+  void update_droplet_raymarch(const std::shared_ptr<Droplet>& droplet)
+  {
+    if (!droplet->hull_mesh || droplet->points.empty())
+      return;
+
+    std::vector<math::vec4f> particles;
+    particles.reserve(MAX_DROPLET_RAYMARCH_PARTICLES);
+
+      //evenly sample up to the shader's fixed array size from the (now denser) cluster.
+      //spreads MAX picks across the whole set, so a 100-particle droplet actually uses all 64
+      //(the old stride-by-ceil only used ~50 of 100).
+
+    size_t count = droplet->points.size();
+    size_t used  = count < MAX_DROPLET_RAYMARCH_PARTICLES ? count : MAX_DROPLET_RAYMARCH_PARTICLES;
+
+    float max_dist = 0.0f;
+
+    for (size_t k = 0; k < used; k++)
+    {
+      size_t i = (count <= MAX_DROPLET_RAYMARCH_PARTICLES) ? k : (k * count) / used;
+      const math::vec3f& p = droplet->points[i];
+      particles.push_back(math::vec4f(p[0], p[1], p[2], live.metaball_radius));
+      max_dist = std::max(max_dist, length(p - droplet->center));
+    }
+
+    int particle_count = (int)particles.size();
+
+      //pad to the shader array size; padding entries are never sampled (the shader breaks at particleCount)
+
+    particles.resize(MAX_DROPLET_RAYMARCH_PARTICLES, math::vec4f(0.0f));
+
+    float box_half = (max_dist + live.metaball_radius + live.influence) * DROPLET_RAYMARCH_BOX_MARGIN;
+
+    droplet->hull_mesh->set_position(droplet->center);
+    droplet->hull_mesh->set_scale(math::vec3f(box_half));
+
+    if (!DROPLET_REFLECT_SKYBOX)
+      droplet->hull_mesh->set_environment_map_local_point(math::vec3f(0.0f)); // node sits at the centre -> dynamic cubemap eye = centre
+
+    common::PropertyMap props;
+    props.set("particles", particles);
+    props.set("particleCount", particle_count);
+    props.set("dropletCenter", droplet->center);
+    props.set("influenceRadius", live.influence);
+    props.set("isoThreshold", live.iso);
+    props.set("boxHalfExtent", box_half);
+
+    droplet->hull_mesh->set_user_data(props);
+  }
+
+  void update(float dt)
   {
     last_frame_time = clock();
+
+    // keep the skybox centred on the camera so it reads as infinitely far (no parallax during movement)
+    sky->set_position(math::vec3f(camera->world_tm() * math::vec4f(0.0f, 0.0f, 0.0f, 1.0f)));
+
+    refresh_live_tuning(); // pull droplet knobs from the in-page sliders (web)
 
       //debug dump
 
@@ -938,9 +1379,13 @@ struct World::Impl: RigidBodyWorldCommonData
       engine_log_debug("Droplets count: %d (particles count %d)", droplets.size(), droplet_particles.size());
     }
 
-      //step the simulation
+      //step the simulation with the real frame time (clamped to avoid a spiral of death), advancing
+      //by a fixed 1/60 substep so behaviour is frame-rate independent (was hardcoded 1/60 per frame ->
+      //0.5x speed at 30fps, 2x at 120Hz). Bullet's substep count then drives the water at the same rate.
 
-    dynamics_world->stepSimulation(1.f / 60.f, 10);
+    float clamped_dt = dt < (1.f / 4.f) ? dt : (1.f / 4.f);
+
+    last_substeps = dynamics_world->stepSimulation(clamped_dt, 10, 1.f / 60.f);
 
       //generate droplets
 
@@ -986,15 +1431,24 @@ struct World::Impl: RigidBodyWorldCommonData
       particle->droplet_particle->fallen = true;
 
       fallen_droplet_particles_count++;
+
+        //a droplet reaching the water surface no longer disturbs it (no impact ripple)
     }
 
     droplet_particles.erase(std::remove_if(droplet_particles.begin(), droplet_particles.end(), [](const std::shared_ptr<PhysBodySync>& particle) {
       return particle->body->getWorldTransform().getOrigin().getY() < MIN_DROPLET_PARTICLE_HEIGHT;
     }), droplet_particles.end());
 
+      //and drop them from the master list too, so ~PhysBodySync removes the rigid body from the Bullet world
+      //(only droplet particles; ground/leaf bodies have no droplet_particle and are left untouched)
+
+    phys_bodies.erase(std::remove_if(phys_bodies.begin(), phys_bodies.end(), [](const std::shared_ptr<PhysBodySync>& body) {
+      return body->droplet_particle && body->droplet_particle->fallen;
+    }), phys_bodies.end());
+
       //clusterize droplet particles to droplets
 
-    float cluster_radius = DROPLET_RADIUS;
+    float cluster_radius = live.physical_radius * 20.0f; // was DROPLET_RADIUS (= physical * 20)
 
     for (size_t i=0; i<CLUSTERIZE_STEPS_COUNT; i++)
     {
@@ -1003,7 +1457,7 @@ struct World::Impl: RigidBodyWorldCommonData
       for (std::shared_ptr<Droplet>& droplet : droplets)
       {
         droplet->points.clear();
-        droplet->hull_builder.reset();
+        droplet->bodies.clear(); // was never cleared -> bodies accumulated across passes/frames, ramping cohesion force and leaking refs
       }
 
         //clusterization step
@@ -1080,10 +1534,14 @@ struct World::Impl: RigidBodyWorldCommonData
 
       droplet->hull_mesh = scene::Mesh::create();
 
-      droplet->hull_mesh->set_environment_map_required(true); //require envmap prerendering
+      // per-droplet dynamic env-map prerendering; skipped when reflecting the static skybox (saves the
+      // whole-scene cubemap re-render per droplet).
+      if (!DROPLET_REFLECT_SKYBOX)
+        droplet->hull_mesh->set_environment_map_required(true);
 
-      droplet->hull_mesh->set_mesh(droplet->hull_builder.mesh());
-      //droplet->hull_mesh->set_mesh(media::geometry::MeshFactory::create_box(DROPLET_HULL_MATERIAL, 1, 1, 1));        
+      // proxy box (unit cube [-1,1]); positioned at the centre + scaled to enclose the metaball each frame.
+      // The fragment shader raymarches the particle SDF inside it; the cube itself is never seen.
+      droplet->hull_mesh->set_mesh(media::geometry::MeshFactory::create_box(DROPLET_FLUID_MATERIAL, 2.f, 2.f, 2.f));
 
       droplet->point_light = scene::PointLight::create();
 
@@ -1151,34 +1609,10 @@ struct World::Impl: RigidBodyWorldCommonData
       
       droplet->center = center / droplet->points.size();
       droplet->prev_centers.push_back(droplet->center);
-
-      math::vec3f sigma;
-
-      for (const math::vec3f& point : droplet->points)
-      {
-        sigma += (point - droplet->center) * (point - droplet->center);
-      }
-
-      sigma = sqrt(length(sigma / droplet->points.size()));
-
-      for (const math::vec3f& point : droplet->points)
-      {
-        if (length(point - droplet->center) > length(sigma))
-          continue;
-        droplet->hull_builder.add_point(point);
-      }
-
-            ///TODO test only!!!!!
-
-        //droplet->hull_mesh->set_position(droplet->center);
-      //engine_log_debug("Droplet center: %f %f %f", droplet->center[0], droplet->center[1], droplet->center[2]);
     }
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
     {
-      if (!DROPLET_DEBUG_DRAW)
-        droplet->hull_mesh->set_environment_map_local_point(inverse(droplet->hull_mesh->world_tm()) * droplet->center);
-
       if (droplet->prev_centers.size() > DROPLET_CENTER_APPROXIMATION_STEPS_COUNT)
         droplet->prev_centers.pop_front();
 
@@ -1223,12 +1657,10 @@ struct World::Impl: RigidBodyWorldCommonData
     droplets.erase(std::remove_if(droplets.begin(), droplets.end(), [](const std::shared_ptr<Droplet>& droplet) { return droplet->remove_counter > DROPLET_REMOVE_COUNTER_THRESHOLD; }),
       droplets.end());
 
-    //build droplet hulls
+    //build droplet surfaces (metaball raymarch)
 
     for (std::shared_ptr<Droplet>& droplet : droplets)
-    {
-      droplet->hull_builder.build_hull(DROPLET_HULL_MATERIAL);
-    }
+      update_droplet_raymarch(droplet);
 
     //apply sd to droplets
 
@@ -1243,17 +1675,15 @@ struct World::Impl: RigidBodyWorldCommonData
 
         //static const float TIME_STEP = 1.0f / 60.0f;
 
-        math::vec3f force = droplet->center - position;// - velocity * TIME_STEP;// + math::vec3f(0, 0.1f * DROPLET_PARTICLE_RADIUS, 0);
-        float distance = length(force);
+        math::vec3f to_center = droplet->center - position;
+        float distance = length(to_center);
 
-        if (distance < DROPLET_PARTICLE_FORCE_DISTANCE && distance > DROPLET_PARTICLE_MIN_INTERACTION_RADIUS)
+        //pull toward the centroid (no upper gate, so spread stragglers get reclaimed instead of abandoned),
+        //with velocity damping so the spring settles into a blob instead of oscillating
+        if (distance > live.physical_radius * 4.0f) // was DROPLET_PARTICLE_MIN_INTERACTION_RADIUS (= physical * 4)
         {
-          //force = normalize(force) * (DROPLET_RADIUS - distance) / DROPLET_RADIUS * DROPLET_PARTICLE_FORCE;
-          //force = normalize(force) * (DROPLET_PARTICLE_FORCE_DISTANCE - distance) * DROPLET_PARTICLE_FORCE;
-          force *= DROPLET_PARTICLE_FORCE;
+          math::vec3f force = to_center * live.force - velocity * live.damping;
           particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-          //particle->body->applyCentralForce(btVector3(0, -10, 0));
-          //particle1->body->applyCentralForce(-btVector3(force[0], force[1], force[2]));
         }
 
         //static const float VELOCITY_BRAKE_FACTOR = 0.0001f;
@@ -1279,6 +1709,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
     for (std::shared_ptr<PhysBodySync>& particle : phys_bodies)
     {
+      if (!particle->mesh) // invisible droplet particle (debug draw off) -> nothing to sync
+        continue;
+
       btTransform transform;
 
       if (particle->body && particle->body->getMotionState())
@@ -1355,7 +1788,12 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //update water surface
 
-    water_surface.update();
+    for (int s = 0; s < last_substeps; ++s) // run the wave/swell sim once per fixed physics substep -> real-time, fps-independent
+      water_surface.update();
+
+      //update fireflies
+
+    update_fireflies();
   }
 
   /// Input control
@@ -1430,9 +1868,14 @@ World::~World()
 {
 }
 
-void World::update()
+void World::update(float dt)
 {
-  impl->update();
+  impl->update(dt);
+}
+
+bool World::is_follow_camera() const
+{
+  return impl->is_follow_camera();
 }
 
 /// Input control

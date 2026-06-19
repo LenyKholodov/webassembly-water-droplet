@@ -4,3 +4,6 @@ dist/index.wasm.map
 dist/index.data
 tmp/
 .DS_Store
+
+# large source video captures — commit only the compressed docs/droplet.mp4
+*.mov
