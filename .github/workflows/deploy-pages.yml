@@ -28,6 +28,8 @@ jobs:
 
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.41   # pin to the version the project builds with; "latest" (4.x) breaks the build
 
       - name: Build (release)
         run: make RELEASE=1 -j   # RELEASE drops the localhost source-map base + shrinks the wasm
