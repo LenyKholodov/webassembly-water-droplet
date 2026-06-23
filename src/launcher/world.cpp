@@ -116,6 +116,7 @@ const size_t PLANT_MAX_COUNT    = 36;     // cap concurrent plants (vertex/perf 
 const float  LEAF_GROW_START       = 0.05f; // leaf scale at spawn (then ramps to 1)
 const float  LEAF_GROW_MIN_SECONDS = 1.5f;  // a leaf unfurls over this..max seconds (random per leaf)
 const float  LEAF_GROW_MAX_SECONDS = 4.5f;
+const float  DROPLET_SPAWN_ABOVE_LEAF = 0.4f; // spawn the droplet a little above the chosen top leaf
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -1258,8 +1259,8 @@ struct World::Impl: RigidBodyWorldCommonData
 
     last_droplet_generated_time = last_frame_time;
 
-    // Rain on the plant's CROWN: pick a random leaf among the topmost ones (within a band below the
-    // highest leaf), so droplets fall on a random top leaf rather than always the same one.
+    // Spawn just above ONE of the HIGHEST leaves (random), so the droplet lands on that top leaf and
+    // travels down the plant to the bottom.
     float y_hi = -1e30f, y_lo = 1e30f;
     for (Leaf& lf : leaves)
     {
@@ -1267,7 +1268,7 @@ struct World::Impl: RigidBodyWorldCommonData
       if (y > y_hi) y_hi = y;
       if (y < y_lo) y_lo = y;
     }
-    float band = y_hi - 0.30f * (y_hi - y_lo); // top 30% of the leaf spread
+    float band = y_hi - 0.15f * (y_hi - y_lo); // only the highest ~15% of leaves
 
     std::vector<size_t> top_leaves;
     for (size_t i = 0; i < leaves.size(); i++)
@@ -1279,12 +1280,11 @@ struct World::Impl: RigidBodyWorldCommonData
       : top_leaves[(size_t) (frand() * top_leaves.size()) % top_leaves.size()];
     Leaf& leaf = leaves[leaf_index];
 
-    // Spawn above the leaf's CURRENT centroid. The leaf moves/tilts over time (physics + particle
-    // impacts), so spawning at the stale initial centre dropped droplets into empty air where the leaf
-    // used to be -> nothing landed -> "no droplets after a while".
+    // a little bit above the leaf's CURRENT centroid (the leaf tilts/moves over time, so use the live
+    // pose) -> the cluster falls onto the leaf and runs off it downward.
     btVector3 lc(leaf.local_center[0], leaf.local_center[1], leaf.local_center[2]);
     btVector3 c = leaf.phys_body->body->getWorldTransform() * lc;
-    math::vec3f spawn(c.x(), c.y() + 0.5f, c.z());
+    math::vec3f spawn(c.x(), c.y() + DROPLET_SPAWN_ABOVE_LEAF, c.z());
 
     generate_droplet(spawn);
   }
