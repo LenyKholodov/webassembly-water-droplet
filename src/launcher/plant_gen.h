@@ -69,4 +69,9 @@ void collect_leaf_slots(const PlantParams& p, std::vector<LeafSlot>& out);
 void generate_leaf(engine::media::geometry::Mesh& out, uint32_t seed, float length,
                    const char* material = "leaf");
 
+// Collision shape for one leaf, MATCHING generate_leaf's shape: a set of convex point-clouds (build
+// each as a btConvexHullShape child of a btCompoundShape) forming a concave V-trough so droplets
+// collect in the leaf instead of rolling off a single convex hull. Seed/length must match the leaf.
+void generate_leaf_collision(uint32_t seed, float length, std::vector<std::vector<math::vec3f>>& out);
+
 }}

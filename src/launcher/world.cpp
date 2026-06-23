@@ -263,6 +263,7 @@ struct Leaf
   float full_scale = 1.0f;     // mature render/hull scale (the blade's world-length scale)
   float grow_age = 0.0f;       // seconds since the leaf sprouted
   float grow_duration = 0.0f;  // 0 = not a growing generated leaf (e.g. ground), >0 = ramp length
+  std::vector<std::shared_ptr<btCollisionShape>> hull_children; // keep compound children alive
 
   Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
     : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time, world_data))
@@ -1091,8 +1092,9 @@ struct World::Impl: RigidBodyWorldCommonData
   }
 
   // Spawn one PROCEDURAL leaf (petiole "leg" + textured blade, generated per-seed for diversity) as a
-  // convex-hull physics body pinned at its leg base so droplets collide with it. `length` = blade
-  // length in world units; the geometry is already at that size with the attach point at the origin.
+  // physics body pinned at its leg base. The collision is a CONCAVE V-trough COMPOUND (so droplets
+  // collect in the leaf instead of rolling off a convex hull). `length` = blade length in world units;
+  // the geometry is already at that size with the attach point at the origin.
   void spawn_leaf(const math::vec3f& world_pos, const math::quatf& rotation, float length, uint32_t seed)
   {
     media::geometry::Mesh leaf_mesh;
@@ -1102,28 +1104,46 @@ struct World::Impl: RigidBodyWorldCommonData
     if (lvc == 0)
       return;
 
-      //convex hull + centroid from the generated leaf (already in world units, origin at the leg base)
-    btConvexHullShape* hull = new btConvexHullShape();
+      //blade centroid (for droplet spawn aim)
     const media::geometry::Vertex* lv = leaf_mesh.vertices_data();
     math::vec3f centroid(0.0f);
     for (uint32_t i = 0; i < lvc; i++)
-    {
-      const math::vec3f& p = lv[i].position;
-      hull->addPoint(btVector3(p[0], p[1], p[2]), false);
-      centroid += p;
-    }
+      centroid += lv[i].position;
     centroid /= (float) lvc;
-    hull->recalcLocalAabb();
-    std::shared_ptr<btCollisionShape> shape(hull);
+
+      //compound collision: a row of convex flaps forming a concave V-channel (see generate_leaf_collision)
+    std::vector<std::vector<math::vec3f>> pieces;
+    launcher::generate_leaf_collision(seed, length, pieces);
+
+    btCompoundShape* compound = new btCompoundShape();
+    std::vector<std::shared_ptr<btCollisionShape>> children;
+    btTransform child_tm;
+    child_tm.setIdentity();
+    for (size_t pi = 0; pi < pieces.size(); pi++)
+    {
+      const std::vector<math::vec3f>& piece = pieces[pi];
+      if (piece.size() < 4)
+        continue;
+      btConvexHullShape* ch = new btConvexHullShape();
+      for (size_t k = 0; k < piece.size(); k++)
+        ch->addPoint(btVector3(piece[k][0], piece[k][1], piece[k][2]), false);
+      ch->recalcLocalAabb();
+      children.push_back(std::shared_ptr<btCollisionShape>(ch));
+      compound->addChildShape(child_tm, ch);
+    }
+    if (children.empty())
+    {
+      delete compound;
+      return;
+    }
+    std::shared_ptr<btCollisionShape> shape(compound);
 
     btVector3 bt_inertia(0, 0, 0);
     shape->calculateLocalInertia(LEAF_MASS, bt_inertia);
     math::vec3f local_inertia(bt_inertia.x(), bt_inertia.y(), bt_inertia.z());
 
-      //start the blade small; it grows in (render node + hull scale ramp, see update_leaf_growth)
-    hull->setLocalScaling(btVector3(LEAF_GROW_START, LEAF_GROW_START, LEAF_GROW_START));
-
-      //textured render node
+      //textured render node. The leaf grows in via the RENDER node scale only (collision stays full
+      //size -- scaling a compound's children is awkward, and the brief grow-in mismatch is harmless).
     scene::Mesh::Pointer mesh = scene::Mesh::create();
     mesh->set_mesh(leaf_mesh);
     mesh->set_position(world_pos);
@@ -1135,6 +1155,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
     Leaf leaf(last_frame_time, *this);
     leaf.phys_body = phys_bodies.back();
+    leaf.hull_children = children; // keep the compound's child shapes alive for the leaf's lifetime
     leaf.target_transform = leaf.phys_body->body->getWorldTransform();
     leaf.local_center   = centroid;                          // blade centre (for droplet spawn aim)
     leaf.initial_center = rotation * centroid + world_pos;
@@ -1186,9 +1207,7 @@ struct World::Impl: RigidBodyWorldCommonData
       float e  = t * t * (3.0f - 2.0f * t);                 // smoothstep ease
       float f  = LEAF_GROW_START + (1.0f - LEAF_GROW_START) * e;
 
-      leaf.phys_body->mesh->set_scale(math::vec3f(leaf.full_scale * f));
-      leaf.phys_body->shape->setLocalScaling(btVector3(f, f, f));
-      dynamics_world->updateSingleAabb(leaf.phys_body->body.get());
+      leaf.phys_body->mesh->set_scale(math::vec3f(leaf.full_scale * f)); // visual grow-in only
     }
   }
 

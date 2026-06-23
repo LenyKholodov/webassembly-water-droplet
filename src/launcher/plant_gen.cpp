@@ -221,6 +221,43 @@ math::vec3f trunk_dir(const PlantParams& p)
       (hashf(p.seed + 101u) - 0.5f) * 0.12f, 1.0f, (hashf(p.seed + 103u) - 0.5f) * 0.12f));
 }
 
+// Shared leaf shape: per-ring midrib centre (C), left edge (L, +Z), right edge (R, -Z). Used by BOTH
+// the render mesh and the collision compound so they match. The blade is concave (edges curl up).
+struct LeafGeom
+{
+  std::vector<math::vec3f> C, L, R;
+  float petL = 0.0f, petR = 0.0f;
+  int   N = 10;
+};
+
+LeafGeom leaf_geom(uint32_t seed, float length)
+{
+  LeafGeom g;
+  float halfW    = length * lerpf(0.18f, 0.34f, hashf(seed * 2654435761u + 1u));
+  float skew     = lerpf(0.80f, 1.30f, hashf(seed + 11u));
+  float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));
+  g.petL         = length * lerpf(0.07f, 0.14f, hashf(seed + 37u));
+  g.petR         = length * lerpf(0.006f, 0.010f, hashf(seed + 41u));
+  float cup      = lerpf(0.14f, 0.34f, hashf(seed + 53u));
+  float droop    = lerpf(-0.02f, 0.14f, hashf(seed + 71u)) * length;
+  g.N = 10;
+
+  g.C.resize(g.N + 1); g.L.resize(g.N + 1); g.R.resize(g.N + 1);
+  for (int i = 0; i <= g.N; i++)
+  {
+    float t    = (float) i / (float) g.N;
+    float x    = g.petL + t * length;
+    float ymid = -droop * t * t;                                   // tip droops down
+    float hw   = halfW * std::pow(std::sin(PI * std::pow(t, skew)), tipSharp);
+    if (hw < 0.0f) hw = 0.0f;
+    float yedge = ymid + cup * hw;                                 // edges curl up (concave/cupped)
+    g.C[i] = math::vec3f(x, ymid,  0.0f);
+    g.L[i] = math::vec3f(x, yedge, +hw);
+    g.R[i] = math::vec3f(x, yedge, -hw);
+  }
+  return g;
+}
+
 } // namespace
 
 PlantParams make_plant_params(uint32_t seed)
@@ -255,16 +292,9 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
   out.clear();
   if (length <= 1e-4f) return;
 
-    //shape params (seeded -> diversity)
-  float halfW    = length * lerpf(0.18f, 0.34f, hashf(seed * 2654435761u + 1u)); // max half-width
-  float skew     = lerpf(0.80f, 1.30f, hashf(seed + 11u));   // where the blade is widest
-  float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));   // tip pointiness (higher = sharper point)
-  float petL     = length * lerpf(0.07f, 0.14f, hashf(seed + 37u)); // petiole ("leg") length (short)
-  float petR     = length * lerpf(0.006f, 0.010f, hashf(seed + 41u)); // petiole radius (thin)
-  float cup      = lerpf(0.14f, 0.34f, hashf(seed + 53u));   // edge curl UP -> always concave (cupped)
-  float droop    = lerpf(-0.02f, 0.14f, hashf(seed + 71u)) * length; // tip droop
-  const int N    = 10;   // blade length segments
-  const int PS   = 5;    // petiole sides
+  LeafGeom g = leaf_geom(seed, length);
+  const int N  = g.N;
+  const int PS = 5;    // petiole sides
 
   std::vector<Vertex>           verts;
   std::vector<Mesh::index_type> indices;
@@ -290,8 +320,8 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
   uint32_t pbase = verts.size();
   for (int ri = 0; ri < 2; ri++)
   {
-    float x = ri == 0 ? 0.0f : petL;
-    float r = ri == 0 ? petR : petR * 0.8f;
+    float x = ri == 0 ? 0.0f : g.petL;
+    float r = ri == 0 ? g.petR : g.petR * 0.8f;
     for (int s = 0; s < PS; s++)
     {
       float a = TWO_PI * (float) s / (float) PS;
@@ -310,16 +340,10 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
   std::vector<uint32_t> Ci(N + 1), Li(N + 1), Ri(N + 1);
   for (int i = 0; i <= N; i++)
   {
-    float t    = (float) i / (float) N;
-    float x    = petL + t * length;
-    float ymid = -droop * t * t;                                   // tip droops down
-    float hw   = halfW * std::pow(std::sin(PI * std::pow(t, skew)), tipSharp);
-    if (hw < 0.0f) hw = 0.0f;
-    float yedge = ymid + cup * hw;                                 // edges curl up
-    float vtex = 0.90f - 0.80f * t;                                // tex leaf flipped along its long axis
-    Ci[i] = addv(math::vec3f(x, ymid, 0.0f),  math::vec3f(0, 1, 0), math::vec2f(0.72f, vtex));
-    Li[i] = addv(math::vec3f(x, yedge, +hw),  math::vec3f(0, 1, 0), math::vec2f(0.58f, vtex));
-    Ri[i] = addv(math::vec3f(x, yedge, -hw),  math::vec3f(0, 1, 0), math::vec2f(0.86f, vtex));
+    float vtex = 0.90f - 0.80f * ((float) i / (float) N);          // tex leaf flipped along its long axis
+    Ci[i] = addv(g.C[i], math::vec3f(0, 1, 0), math::vec2f(0.72f, vtex));
+    Li[i] = addv(g.L[i], math::vec3f(0, 1, 0), math::vec2f(0.58f, vtex));
+    Ri[i] = addv(g.R[i], math::vec3f(0, 1, 0), math::vec2f(0.86f, vtex));
   }
   for (int i = 0; i < N; i++)
   {
@@ -329,6 +353,40 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
 
   out.add_primitive(material, PrimitiveType_TriangleList,
                     &verts[0], (Mesh::index_type) verts.size(), &indices[0], (uint32_t) indices.size());
+}
+
+void generate_leaf_collision(uint32_t seed, float length, std::vector<std::vector<math::vec3f>>& out)
+{
+  out.clear();
+  if (length <= 1e-4f) return;
+
+  LeafGeom g = leaf_geom(seed, length);
+
+  // Concave CUP from convex pieces: a row of "flaps" forming a V-channel. Each flap is a thin slab
+  // from the midrib (low, z=0) up to one raised edge; left+right flaps funnel a droplet down to the
+  // midrib seam, where it collects (and runs toward the drooping tip). Split along the length into S
+  // blocks so the lengthwise droop is followed too. Slabs are thickened DOWNWARD only, so the top
+  // channel (the cup) is preserved.
+  const int   S    = 3;
+  const float th   = length * 0.08f + 0.03f;     // collision-only downward thickness (anti-tunnel)
+  const math::vec3f down(0.0f, -th, 0.0f);
+
+  for (int b = 0; b < S; b++)
+  {
+    int i0 = b * g.N / S;
+    int i1 = (b + 1) * g.N / S;
+
+    std::vector<math::vec3f> left, right;
+    for (int i = i0; i <= i1; i++)
+    {
+      left.push_back(g.C[i]);  left.push_back(g.L[i]);
+      left.push_back(g.C[i] + down); left.push_back(g.L[i] + down);
+      right.push_back(g.C[i]); right.push_back(g.R[i]);
+      right.push_back(g.C[i] + down); right.push_back(g.R[i] + down);
+    }
+    out.push_back(left);
+    out.push_back(right);
+  }
 }
 
 void collect_leaf_slots(const PlantParams& p, std::vector<LeafSlot>& out)
