@@ -256,13 +256,13 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
   if (length <= 1e-4f) return;
 
     //shape params (seeded -> diversity)
-  float halfW    = length * lerpf(0.20f, 0.38f, hashf(seed * 2654435761u + 1u)); // max half-width
-  float skew     = lerpf(0.75f, 1.25f, hashf(seed + 11u));   // where the blade is widest
-  float tipSharp = lerpf(0.55f, 1.10f, hashf(seed + 23u));   // tip pointiness
-  float petL     = length * lerpf(0.16f, 0.30f, hashf(seed + 37u)); // petiole ("leg") length
-  float petR     = length * lerpf(0.012f, 0.020f, hashf(seed + 41u));
-  float cup      = lerpf(-0.05f, 0.22f, hashf(seed + 53u));  // edge curl (up = cupped)
-  float droop    = lerpf(-0.04f, 0.16f, hashf(seed + 71u)) * length; // tip droop
+  float halfW    = length * lerpf(0.18f, 0.34f, hashf(seed * 2654435761u + 1u)); // max half-width
+  float skew     = lerpf(0.80f, 1.30f, hashf(seed + 11u));   // where the blade is widest
+  float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));   // tip pointiness (higher = sharper point)
+  float petL     = length * lerpf(0.07f, 0.14f, hashf(seed + 37u)); // petiole ("leg") length (short)
+  float petR     = length * lerpf(0.006f, 0.010f, hashf(seed + 41u)); // petiole radius (thin)
+  float cup      = lerpf(0.14f, 0.34f, hashf(seed + 53u));   // edge curl UP -> always concave (cupped)
+  float droop    = lerpf(-0.02f, 0.14f, hashf(seed + 71u)) * length; // tip droop
   const int N    = 10;   // blade length segments
   const int PS   = 5;    // petiole sides
 
@@ -316,7 +316,7 @@ void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
     float hw   = halfW * std::pow(std::sin(PI * std::pow(t, skew)), tipSharp);
     if (hw < 0.0f) hw = 0.0f;
     float yedge = ymid + cup * hw;                                 // edges curl up
-    float vtex = 0.10f + 0.80f * t;                                // base->tip along the tex leaf
+    float vtex = 0.90f - 0.80f * t;                                // tex leaf flipped along its long axis
     Ci[i] = addv(math::vec3f(x, ymid, 0.0f),  math::vec3f(0, 1, 0), math::vec2f(0.72f, vtex));
     Li[i] = addv(math::vec3f(x, yedge, +hw),  math::vec3f(0, 1, 0), math::vec2f(0.58f, vtex));
     Ri[i] = addv(math::vec3f(x, yedge, -hw),  math::vec3f(0, 1, 0), math::vec2f(0.86f, vtex));
