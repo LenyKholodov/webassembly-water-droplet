@@ -216,8 +216,17 @@ void main()
     }
   }
   
+  // Moonlight: a fixed cool directional key light so the plant (leaves especially) reads at night,
+  // plus a faint ambient floor so nothing is pure black. Two-sided (leaves are single-strip blades):
+  // back faces get a fraction of the key so a leaf is visible from either side.
+  vec3 moonDir   = normalize(vec3(-0.35, 0.88, 0.32));
+  vec3 moonColor = vec3(0.85, 0.95, 1.15);
+  float moonNL   = dot(normal, moonDir);
+  color += diffuseColor.xyz * moonColor * (max(moonNL, 0.0) + 0.40 * max(-moonNL, 0.0));
+  color += diffuseColor.xyz * 0.16;
+
   outColor = vec4(color, 1.0);
-  
+
 #if DEBUG
   // debug output
   if (texCoord.x < 0.5 && texCoord.y < 0.5)

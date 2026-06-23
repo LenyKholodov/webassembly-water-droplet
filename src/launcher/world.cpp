@@ -1,4 +1,5 @@
 #include "shared.h"
+#include "plant_gen.h"
 
 #include <common/log.h>
 #include <common/named_dictionary.h>
@@ -106,6 +107,12 @@ const float PLANT_MAX_SCALE = 3.0f;
 const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
+
+// Procedural branching-plant growth (see docs/plant-growth-references.md). A plant sprouts when
+// water accumulates, then grows its branch structure over PLANT_GROW_SECONDS up to mature height.
+const float  PLANT_GROW_SECONDS = 60.0f;  // time from sprout to full structure (the "1 minute")
+const float  PLANT_REBUILD_DG   = 0.006f; // re-mesh when growth advances this much (smooth, cheap)
+const size_t PLANT_MAX_COUNT    = 36;     // cap concurrent plants (vertex/perf budget)
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -259,6 +266,14 @@ struct Plant
   scene::Mesh::Pointer mesh;
   scene::PointLight::Pointer point_light;
   float scale = 1.0f;
+  // procedural branching-plant state: grows from a sprout to full structure over PLANT_GROW_SECONDS.
+  launcher::PlantParams params;
+  math::vec3f base_position;   // world position of the plant base
+  float age = 0.0f;            // seconds since it sprouted
+  float growth = 0.0f;         // g in [0,1] = age / PLANT_GROW_SECONDS
+  float built_growth = -1.0f;  // g the current mesh was built at (rebuild throttle)
+  std::vector<launcher::LeafSlot> slots; // leaf attachment slots (local space), each with a birth_g
+  std::vector<char> slot_spawned;        // whether a physics leaf has been spawned for each slot
 };
 
 struct PlantLight
@@ -542,6 +557,7 @@ struct WaterSurface
 struct World::Impl: RigidBodyWorldCommonData
 {
   media::geometry::Model leaf_model;
+  std::vector<size_t> leaf_blade_primitives; // indices of leaf.obj "leave_*" blades, reused as generated leaves
   media::geometry::Model plant_model;
   scene::Node::Pointer scene_root;
   scene::Camera::Pointer camera;
@@ -564,6 +580,7 @@ struct World::Impl: RigidBodyWorldCommonData
   Material droplet_fluid_material;
   Material sky_material;
   Material water_material;
+  Material flower_material; // procedural flowers (vertex-colour lit; tag "flower")
   std::vector<std::shared_ptr<Plant>> plants;
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
@@ -636,10 +653,13 @@ struct World::Impl: RigidBodyWorldCommonData
     TextureList water_textures = water_material.textures();
     water_textures.insert("skyTexture", sky_texture);
 
+    flower_material.set_shader_tags("flower"); // generator paints per-vertex; shader lights it (no texture)
+
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
     materials.insert(DROPLET_FLUID_MATERIAL, droplet_fluid_material);
     materials.insert(SKY_MATERIAL, sky_material);
     materials.insert(WATER_SURFACE_MATERIAL_NAME, water_material);
+    materials.insert("flower", flower_material);
 
       //scale meshes
 
@@ -648,9 +668,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //create leaves
 
-     //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
-    add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
-     //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+      //the static demo tree (add_stem) is replaced by one procedural plant that GROWS from a sprout;
+      //its leaves are spawned as real leaf-blade physics bodies as it grows (see spawn_initial_plant).
+     //add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
 
       //configure physics
 
@@ -673,6 +693,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
     setup_ground();
     setup_fireflies(scene_renderer);
+    spawn_initial_plant();
 
     if (!gContactAddedCallback)
     {
@@ -1007,6 +1028,208 @@ struct World::Impl: RigidBodyWorldCommonData
     }
   }
 
+  // Quaternion rotating unit vector a onto unit vector b.
+  math::quatf quat_from_to(const math::vec3f& a, const math::vec3f& b)
+  {
+    math::vec3f an = math::normalize(a), bn = math::normalize(b);
+    float d = math::dot(an, bn);
+    if (d > 0.9999f)
+      return to_quat(math::radian(0.0f), math::vec3f(0, 1, 0));
+    if (d < -0.9999f)
+    {
+      math::vec3f perp = std::fabs(an.x) < 0.9f ? math::vec3f(1, 0, 0) : math::vec3f(0, 1, 0);
+      return to_quat(math::radian(math::constf::pi), math::normalize(math::cross(an, perp)));
+    }
+    return to_quat(math::radian(acos(d)), math::normalize(math::cross(an, bn)));
+  }
+
+  // Orient a leaf blade so its LONG axis (local +X, the 45-unit dimension) points outward along `dir`
+  // and its broad FACE (normal = local +Y) faces up -- otherwise the thin blade is seen edge-on and
+  // looks like there are no leaves. A small random twist adds variety.
+  math::quatf leaf_orientation(const math::vec3f& dir)
+  {
+    math::vec3f d = math::normalize(dir);
+
+      //align the blade length (+X) with the outward direction
+    math::quatf q1 = quat_from_to(math::vec3f(1, 0, 0), d);
+
+      //desired face-up direction, perpendicular to d
+    math::vec3f wup(0, 1, 0);
+    math::vec3f up = wup - d * math::dot(wup, d);
+    if (math::qlen(up) < 1e-4f)
+      up = math::vec3f(0, 0, 1) - d * math::dot(math::vec3f(0, 0, 1), d);
+    up = math::normalize(up);
+
+      //twist around d so the blade normal (q1 * +Y) lands on `up`
+    math::vec3f n1 = q1 * math::vec3f(0, 1, 0);
+    float c = math::dot(n1, up); c = c < -1.f ? -1.f : (c > 1.f ? 1.f : c);
+    float s = math::dot(math::cross(n1, up), d);
+    math::quatf q2 = to_quat(math::radian(atan2(s, c)), d);
+
+      //small random twist for variety (so leaves aren't perfectly coplanar)
+    math::quatf q3 = to_quat(math::radian((frand() - 0.5f) * 1.4f), d);
+
+    return q3 * q2 * q1;
+  }
+
+  // Spawn one leaf as a real leaf-blade physics body (mirrors the demo leaves): a convex-hull rigid
+  // body pinned by a point-to-point constraint so droplets collide with it and it swings. Reuses the
+  // leaf.obj blade geometry + texture, scaled so the blade is ~world_len long.
+  void spawn_leaf(size_t prim_index, const math::vec3f& world_pos, const math::quatf& rotation, float world_len)
+  {
+    const media::geometry::Mesh& gmesh = leaf_model.mesh;
+    const media::geometry::Primitive& primitive = gmesh.primitive(prim_index);
+
+      //unique vertex positions of this blade + centroid + longest extent (to scale to world_len)
+    std::vector<math::vec3f> pts;
+    std::unordered_map<media::geometry::Mesh::index_type, uint32_t> remap;
+    const media::geometry::Mesh::index_type* idx = gmesh.indices_data() + primitive.first * 3;
+    math::vec3f lo(1e9f), hi(-1e9f), centroid(0.0f);
+    for (size_t i = 0, n = primitive.count * 3; i < n; i++, idx++)
+    {
+      if (remap.find(*idx) != remap.end())
+        continue;
+      remap[*idx] = (uint32_t) pts.size();
+      math::vec3f p = gmesh.vertices_data()[*idx].position;
+      pts.push_back(p);
+      for (int k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; }
+    }
+    if (pts.empty())
+      return;
+    for (size_t i = 0; i < pts.size(); i++) centroid += pts[i];
+    centroid /= (float) pts.size();
+
+    math::vec3f ext = hi - lo;
+    float unit = std::max(ext[0], std::max(ext[1], ext[2]));
+    float s = unit > 1e-4f ? world_len / unit : 1.0f;
+
+      //Leaf BASE = base of the spine (petiole): the narrow end of the blade's long axis. The leaf is
+      //mounted/pinned here so the blade extends OUTWARD from the branch (like a real petiole), instead
+      //of being pinned through its middle. Long axis = the blade's largest extent; base = its min end,
+      //centred across the other two axes.
+    int la = (ext[0] >= ext[1] && ext[0] >= ext[2]) ? 0 : (ext[1] >= ext[2] ? 1 : 2);
+    float base_thresh = lo[la] + ext[la] * 0.12f;
+    math::vec3f base(0.0f);
+    int base_n = 0;
+    for (size_t i = 0; i < pts.size(); i++)
+      if (pts[i][la] <= base_thresh) { base += pts[i]; base_n++; }
+    base = base_n > 0 ? base / (float) base_n : centroid;
+
+      //convex hull from the scaled blade, RECENTRED on its centroid: in leaf.obj each blade sits at
+      //its original position in the model (far from the origin), so without recentring the blade would
+      //render/collide far from world_pos -- the leaves would float in the original model's layout
+      //instead of on our branches.
+    btConvexHullShape* hull = new btConvexHullShape();
+    for (size_t i = 0; i < pts.size(); i++)
+    {
+      math::vec3f q = (pts[i] - base) * s;
+      hull->addPoint(btVector3(q[0], q[1], q[2]), false);
+    }
+    hull->recalcLocalAabb();
+    std::shared_ptr<btCollisionShape> shape(hull);
+
+    btVector3 bt_inertia(0, 0, 0);
+    shape->calculateLocalInertia(LEAF_MASS, bt_inertia);
+    math::vec3f local_inertia(bt_inertia.x(), bt_inertia.y(), bt_inertia.z());
+
+      //Standalone single-primitive copy of the blade (renders reliably like create_box; rendering a
+      //sub-range of the big shared leaf mesh left the blades invisible). Keeps the leaf material+texture.
+    media::geometry::Mesh leaf_mesh;
+    {
+      std::vector<media::geometry::Vertex> lv;
+      std::vector<media::geometry::Mesh::index_type> li;
+      std::unordered_map<media::geometry::Mesh::index_type, media::geometry::Mesh::index_type> rmap;
+      const media::geometry::Mesh::index_type* ix = gmesh.indices_data() + primitive.first * 3;
+      for (size_t k = 0, n = primitive.count * 3; k < n; k++, ix++)
+      {
+        std::unordered_map<media::geometry::Mesh::index_type, media::geometry::Mesh::index_type>::iterator it = rmap.find(*ix);
+        media::geometry::Mesh::index_type ni;
+        if (it == rmap.end())
+        {
+          ni = (media::geometry::Mesh::index_type) lv.size();
+          rmap[*ix] = ni;
+          media::geometry::Vertex vtx = gmesh.vertices_data()[*ix];
+          vtx.position = vtx.position - base;                 // origin at the spine base (see comment above)
+          vtx.color = math::vec4f(0.28f, 0.55f, 0.20f, 1.0f); // leaf green (flower shader uses vColor)
+          lv.push_back(vtx);
+        }
+        else ni = it->second;
+        li.push_back(ni);
+      }
+      leaf_mesh.add_primitive("flower", media::geometry::PrimitiveType_TriangleList,
+        &lv[0], (media::geometry::Mesh::index_type) lv.size(), &li[0], (uint32_t) li.size());
+    }
+
+      //textured render node
+    scene::Mesh::Pointer mesh = scene::Mesh::create();
+    mesh->set_mesh(leaf_mesh);
+    mesh->set_position(world_pos);
+    mesh->set_orientation(rotation);
+    mesh->set_scale(math::vec3f(s));
+    mesh->bind_to_parent(*scene_root);
+
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, world_pos, rotation, mesh, COLLISION_GROUP_LEAF, COLLISION_MASK_LEAF, dynamics_world));
+
+    Leaf leaf(last_frame_time, *this);
+    leaf.phys_body = phys_bodies.back();
+    leaf.target_transform = leaf.phys_body->body->getWorldTransform();
+    leaf.local_center   = (centroid - base) * s; // blade centre relative to the spine-base origin
+    leaf.initial_center = rotation * ((centroid - base) * s) + world_pos;
+    leaf.phys_body->body->setUserPointer(leaf.rigid_body_info.get());
+    leaf.phys_body->body->setFriction(crand(LEAF_MIN_FRICTION, LEAF_MAX_FRICTION));
+
+      //pin at the spine base (the body origin) so the leaf mounts there and swings from its petiole
+    btVector3 pivot(0.0f, 0.0f, 0.0f);
+    btTransform start;
+    start.setIdentity();
+    start.setOrigin(pivot);
+    start = leaf.phys_body->body->getWorldTransform() * start;
+
+    btVector3 anchor_inertia(0, 0, 0);
+    btRigidBody::btRigidBodyConstructionInfo rb_info(0.0f, nullptr, static_bind_shape.get(), anchor_inertia);
+    rb_info.m_startWorldTransform = start;
+    leaf.static_bind_body = std::make_shared<btRigidBody>(rb_info);
+    dynamics_world->addRigidBody(leaf.static_bind_body.get(), COLLISION_GROUP_LEAF, 0);
+
+    leaf.constraint = std::make_shared<btPoint2PointConstraint>(*leaf.phys_body->body, *leaf.static_bind_body,
+      pivot, btVector3(0, 0, 0));
+    dynamics_world->addConstraint(leaf.constraint.get(), true);
+
+    leaves.push_back(leaf);
+  }
+
+  // One growing plant at the scene centre, sprouting from g=0 (see update_plants for the growth).
+  void spawn_initial_plant()
+  {
+    for (size_t i = 0, c = leaf_model.mesh.primitives_count(); i < c; i++)
+    {
+      const media::geometry::Primitive& prim = leaf_model.mesh.primitive(i);
+      if (prim.type == media::geometry::PrimitiveType_TriangleList && prim.name.find("leave_") == 0)
+        leaf_blade_primitives.push_back(i);
+    }
+
+    generate_plant(STEAM_POSITION);
+
+#if PLANT_DEBUG_FULLGROWN
+    {
+      std::shared_ptr<Plant> pl = plants.back();
+      pl->age = PLANT_GROW_SECONDS;
+      pl->growth = 1.0f;
+      rebuild_plant(pl);
+
+      for (size_t i = 0; i < pl->slots.size(); i++)
+      {
+        const launcher::LeafSlot& slot = pl->slots[i];
+        math::vec3f wpos = pl->base_position + slot.pos * pl->scale;
+        size_t prim = leaf_blade_primitives.empty() ? 0
+                    : leaf_blade_primitives[slot.seed % leaf_blade_primitives.size()];
+        spawn_leaf(prim, wpos, leaf_orientation(slot.dir), slot.size);
+        pl->slot_spawned[i] = 1;
+      }
+    }
+#endif
+  }
+
   // Remove the oldest n droplet particles (front of droplet_particles == generation order) from both
   // droplet_particles and the master phys_bodies, so ~PhysBodySync removes them from the Bullet world.
   void retire_oldest_droplet_particles(size_t n)
@@ -1049,7 +1272,25 @@ struct World::Impl: RigidBodyWorldCommonData
 
     last_droplet_generated_time = last_frame_time;
 
-    size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
+    // Rain on the plant's CROWN: pick a random leaf among the topmost ones (within a band below the
+    // highest leaf), so droplets fall on a random top leaf rather than always the same one.
+    float y_hi = -1e30f, y_lo = 1e30f;
+    for (Leaf& lf : leaves)
+    {
+      float y = lf.phys_body->body->getWorldTransform().getOrigin().y();
+      if (y > y_hi) y_hi = y;
+      if (y < y_lo) y_lo = y;
+    }
+    float band = y_hi - 0.30f * (y_hi - y_lo); // top 30% of the leaf spread
+
+    std::vector<size_t> top_leaves;
+    for (size_t i = 0; i < leaves.size(); i++)
+      if (leaves[i].phys_body->body->getWorldTransform().getOrigin().y() >= band)
+        top_leaves.push_back(i);
+
+    size_t leaf_index = top_leaves.empty()
+      ? 0
+      : top_leaves[(size_t) (frand() * top_leaves.size()) % top_leaves.size()];
     Leaf& leaf = leaves[leaf_index];
 
     // Spawn above the leaf's CURRENT centroid. The leaf moves/tilts over time (physics + particle
@@ -1128,32 +1369,60 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_particles.push_back(phys_bodies.back());
   }
 
-  void generate_plant()
+  // (Re)build a plant's branch geometry for its current growth and push it to the GPU.
+  void rebuild_plant(const std::shared_ptr<Plant>& plant)
   {
-      //try to grow existing plant
+    media::geometry::Mesh mesh;
+    launcher::generate_plant_mesh(mesh, plant->params, plant->growth);
+    if (mesh.primitives_count() > 0)
+      plant->mesh->set_mesh(mesh);
+    plant->built_growth = plant->growth;
+  }
 
-    if (frand() < PLANT_GROW_CHANCE)
-    {  
-      std::random_device rd;
-      std::mt19937 g(rd());
-
-      std::shuffle(plants.begin(), plants.end(), g);
-
-      for (auto& plant : plants)
+  // Advance every still-growing plant by dt; re-mesh when growth moved enough (called each frame).
+  void update_plants(float dt)
+  {
+    for (auto& plant : plants)
+    {
+      if (plant->growth < 1.0f)
       {
-        if (plant->scale >= PLANT_MAX_SCALE)
+        plant->age   += dt;
+        plant->growth = std::min(1.0f, plant->age / PLANT_GROW_SECONDS);
+
+        rebuild_plant(plant); // rebuild every frame while growing -> smooth, continuous growth
+      }
+
+        //spawn a real leaf-blade physics body for each slot whose birth has been reached
+      for (size_t i = 0; i < plant->slots.size(); i++)
+      {
+        if (plant->slot_spawned[i])
           continue;
 
-        plant->scale *= PLANT_SCALE_STEP;
+        const launcher::LeafSlot& slot = plant->slots[i];
 
-        plant->mesh->set_scale(math::vec3f(plant->scale));
+        if (plant->growth < slot.birth_g)
+          continue;
 
-        return;
+        // slot.pos is local (scaled into the world by plant->scale); slot.size is already a world
+        // length (derived from target_height), so it must NOT be scaled again.
+        math::vec3f wpos = plant->base_position + slot.pos * plant->scale;
+        float world_len  = slot.size;
+        size_t prim = leaf_blade_primitives.empty() ? 0
+                    : leaf_blade_primitives[slot.seed % leaf_blade_primitives.size()];
+
+        spawn_leaf(prim, wpos, leaf_orientation(slot.dir), world_len);
+        plant->slot_spawned[i] = 1;
       }
     }
+  }
 
-      //generate new plant
-    
+  void generate_plant()
+  {
+      //water accumulated -> sprout a new plant (growth itself is driven by time, see update_plants)
+
+    if (plants.size() >= PLANT_MAX_COUNT)
+      return;
+
     math::vec3f position(crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS, PLANT_GENERATION_HEIGHT, crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS);
 
     generate_plant(position);
@@ -1163,20 +1432,32 @@ struct World::Impl: RigidBodyWorldCommonData
   {
     std::shared_ptr<Plant> plant = std::make_shared<Plant>();
 
+      //fresh random shape/colour each app run, then sprout at g=0 (it grows in over time)
+    uint32_t seed = ((uint32_t) (frand() * 4294967040.0f)) ^ 0x9e3779b9u;
+    plant->params        = launcher::make_plant_params(seed);
+    plant->base_position = position;
+    plant->age           = 0.0f;
+    plant->growth        = 0.0f;
+
+      //size the plant so its MATURE structure (branches stack past the trunk) reaches target_height.
+      //Measured once from a full-growth build; the node scale then holds while the geometry grows in.
+    media::geometry::Mesh full;
+    launcher::generate_plant_mesh(full, plant->params, 1.0f);
+    float full_height = 0.0f;
+    for (uint32_t i = 0, n = full.vertices_count(); i < n; i++)
+      full_height = std::max(full_height, full.vertices_data()[i].position.y);
+    plant->scale = full_height > 1e-3f ? plant->params.target_height / full_height : 1.0f;
+
+      //leaf attachment slots (each spawns a physics leaf when growth passes its birth_g)
+    launcher::collect_leaf_slots(plant->params, plant->slots);
+    plant->slot_spawned.assign(plant->slots.size(), 0);
+
     plant->mesh = scene::Mesh::create();
 
     plant->mesh->set_position(position);
-    plant->mesh->set_mesh(plant_model.mesh);
+    plant->mesh->set_scale(math::vec3f(plant->scale));
+    rebuild_plant(plant);
     plant->mesh->bind_to_parent(*scene_root);
-
-    plant->point_light = scene::PointLight::create();
-
-    plant->point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
-    plant->point_light->set_attenuation(LIGHTS_ATTENUATION);
-    plant->point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
-    plant->point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
-
-    //plant->point_light->bind_to_parent(*plant->mesh);
 
     plants.push_back(plant);
   }
@@ -1279,7 +1560,11 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //generate droplets
 
-    generate_droplet();    
+    generate_droplet();
+
+      //advance procedural plant growth (time-driven branch growth)
+
+    update_plants(clamped_dt);
 
       //update leaves
 
@@ -1535,11 +1820,11 @@ struct World::Impl: RigidBodyWorldCommonData
       }
     }
 
-      //generate plants
+      //a single procedural plant grows from startup (see spawn_initial_plant / update_plants); the old
+      //water-triggered multi-plant spawning is disabled. Keep the droplet-landing chime.
 
     if (fallen_droplet_particles_count > PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD)
     {
-      generate_plant();
       SoundPlayer::play_sound(SoundId::droplet_ground);
       fallen_droplet_particles_count = 0;
     }
