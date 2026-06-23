@@ -250,6 +250,87 @@ void generate_plant_mesh(Mesh& out, const PlantParams& p, float g, const char* m
                     &bld.indices[0], (uint32_t) bld.indices.size());
 }
 
+void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)
+{
+  out.clear();
+  if (length <= 1e-4f) return;
+
+    //shape params (seeded -> diversity)
+  float halfW    = length * lerpf(0.20f, 0.38f, hashf(seed * 2654435761u + 1u)); // max half-width
+  float skew     = lerpf(0.75f, 1.25f, hashf(seed + 11u));   // where the blade is widest
+  float tipSharp = lerpf(0.55f, 1.10f, hashf(seed + 23u));   // tip pointiness
+  float petL     = length * lerpf(0.16f, 0.30f, hashf(seed + 37u)); // petiole ("leg") length
+  float petR     = length * lerpf(0.012f, 0.020f, hashf(seed + 41u));
+  float cup      = lerpf(-0.05f, 0.22f, hashf(seed + 53u));  // edge curl (up = cupped)
+  float droop    = lerpf(-0.04f, 0.16f, hashf(seed + 71u)) * length; // tip droop
+  const int N    = 10;   // blade length segments
+  const int PS   = 5;    // petiole sides
+
+  std::vector<Vertex>           verts;
+  std::vector<Mesh::index_type> indices;
+
+  auto addv = [&](const math::vec3f& p, const math::vec3f& n, const math::vec2f& uv) -> uint32_t
+  {
+    Vertex v;
+    v.position  = p;
+    v.normal    = math::normalize(n);
+    v.color     = math::vec4f(1, 1, 1, 1); // leaf shader uses the texture, not vColor
+    v.tex_coord = uv;
+    verts.push_back(v);
+    return (uint32_t) verts.size() - 1;
+  };
+  auto tri = [&](uint32_t a, uint32_t b, uint32_t c)
+  {
+    indices.push_back((Mesh::index_type) a);
+    indices.push_back((Mesh::index_type) b);
+    indices.push_back((Mesh::index_type) c);
+  };
+
+    //--- petiole "leg": a thin tube along +X from the origin (branch) to the blade base ---
+  uint32_t pbase = verts.size();
+  for (int ri = 0; ri < 2; ri++)
+  {
+    float x = ri == 0 ? 0.0f : petL;
+    float r = ri == 0 ? petR : petR * 0.8f;
+    for (int s = 0; s < PS; s++)
+    {
+      float a = TWO_PI * (float) s / (float) PS;
+      math::vec3f dir(0.0f, std::cos(a), std::sin(a));     // ring around +X
+      addv(math::vec3f(x, dir.y * r, dir.z * r), dir, math::vec2f(0.72f, 0.04f)); // green base of the tex leaf
+    }
+  }
+  for (int s = 0; s < PS; s++)
+  {
+    int s2 = (s + 1) % PS;
+    uint32_t a = pbase + s, b = pbase + s2, c = pbase + PS + s2, d = pbase + PS + s;
+    tri(a, b, c); tri(a, c, d);
+  }
+
+    //--- blade: midrib centre C + left/right edges, mapped onto the textured leaf (right half of the png) ---
+  std::vector<uint32_t> Ci(N + 1), Li(N + 1), Ri(N + 1);
+  for (int i = 0; i <= N; i++)
+  {
+    float t    = (float) i / (float) N;
+    float x    = petL + t * length;
+    float ymid = -droop * t * t;                                   // tip droops down
+    float hw   = halfW * std::pow(std::sin(PI * std::pow(t, skew)), tipSharp);
+    if (hw < 0.0f) hw = 0.0f;
+    float yedge = ymid + cup * hw;                                 // edges curl up
+    float vtex = 0.10f + 0.80f * t;                                // base->tip along the tex leaf
+    Ci[i] = addv(math::vec3f(x, ymid, 0.0f),  math::vec3f(0, 1, 0), math::vec2f(0.72f, vtex));
+    Li[i] = addv(math::vec3f(x, yedge, +hw),  math::vec3f(0, 1, 0), math::vec2f(0.58f, vtex));
+    Ri[i] = addv(math::vec3f(x, yedge, -hw),  math::vec3f(0, 1, 0), math::vec2f(0.86f, vtex));
+  }
+  for (int i = 0; i < N; i++)
+  {
+    tri(Ci[i], Li[i], Li[i + 1]); tri(Ci[i], Li[i + 1], Ci[i + 1]); // left half
+    tri(Ci[i], Ri[i + 1], Ri[i]); tri(Ci[i], Ci[i + 1], Ri[i + 1]); // right half
+  }
+
+  out.add_primitive(material, PrimitiveType_TriangleList,
+                    &verts[0], (Mesh::index_type) verts.size(), &indices[0], (uint32_t) indices.size());
+}
+
 void collect_leaf_slots(const PlantParams& p, std::vector<LeafSlot>& out)
 {
   out.clear();

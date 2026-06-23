@@ -61,4 +61,12 @@ void generate_plant_mesh(engine::media::geometry::Mesh& out, const PlantParams& 
 // Collect every leaf attachment slot for the mature plant (each carries its own birth_g).
 void collect_leaf_slots(const PlantParams& p, std::vector<LeafSlot>& out);
 
+// Generate ONE procedural leaf (a petiole "leg" + a textured blade), seeded for shape diversity.
+// Built in leaf-local space: the leg base is at the origin (the branch attachment), the leaf extends
+// along +X (tip), the blade normal is +Y, width along Z. `length` is the blade length in world units.
+// UVs map the leaf in media/textures/leaf_color.png onto the blade (material is "leaf"). No static
+// leaf.obj is used.
+void generate_leaf(engine::media::geometry::Mesh& out, uint32_t seed, float length,
+                   const char* material = "leaf");
+
 }}
