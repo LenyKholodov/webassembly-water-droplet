@@ -101,7 +101,7 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
 {
   if (cx.branch_count >= MAX_BRANCHES) return;
 
-  float span    = SPAN[depth < 5 ? depth : 4];
+  float span    = SPAN[depth < 5 ? depth : 4] * lerpf(0.65f, 1.45f, hashf(id + 777u)); // per-branch growth speed (diversity)
   float mature  = birth + span; if (mature > 1.0f) mature = 1.0f;  // fully extended by g=1 at the latest
   bool  collect = cx.slots != nullptr;
   float local   = collect ? 1.0f : smoothstepf(birth, mature, cx.g);
@@ -181,7 +181,7 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
       s.pos     = at;
       s.dir     = ldir;
       s.birth_g = mature;  // spawn once the branch is fully grown, so the leaf sits ON the finished branch
-      s.size    = cx.p->target_height * lerpf(0.10f, 0.17f, hashf(id + (uint32_t) j * 17u + 3u));
+      s.size    = cx.p->target_height * lerpf(0.022f, 0.050f, hashf(id + (uint32_t) j * 17u + 3u)); // ~4x smaller, varied
       s.seed    = id * 131u + (uint32_t) j;
       cx.slots->push_back(s);
     }
