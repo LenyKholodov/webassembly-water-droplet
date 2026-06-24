@@ -1,4 +1,5 @@
 #include "shared.h"
+#include "plant_gen.h"
 
 #include <common/log.h>
 #include <common/named_dictionary.h>
@@ -29,13 +30,18 @@ const char* PLANT_MESH = "media/meshes/fern.obj";
 const size_t CLUSTERIZE_STEPS_COUNT = 3;
 const float CLUSTERIZE_STEP_FACTOR = 1.2;
 const size_t PREFERRED_MAX_DROPLETS_COUNT = 3;
-const float DROPLET_PARTICLE_RADIUS = 0.025f;
+const float DROPLET_PARTICLE_RADIUS = 0.027f;
 const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.13f;    // centroid spring (tuned); keep >~0.08 or droplets are too loose and slip THROUGH the leaf's thin static-mesh collider
-const float DROPLET_PARTICLE_DAMPING = 0.002f; // velocity damping (tuned)
+// Surface tension is modelled as SPH-style PAIRWISE cohesion between neighbouring particles (Akinci et
+// al. 2013), NOT a spring to the cluster centroid. Each near pair attracts with a kernel that vanishes
+// at contact and at the cohesion radius and peaks in between -> the blob minimises its surface area and
+// holds together (necking/merging) without imploding toward a point.
+const float DROPLET_SURFACE_TENSION = 1.0f;    // pairwise cohesion accel (gamma); live via window.DROPLET.force
+const float DROPLET_VISCOSITY       = 1.0f;    // pairwise relative-velocity damping rate (settles internal jiggle, keeps the fall); live via window.DROPLET.damping
+const float DROPLET_COHESION_RADIUS = 0.11f;   // neighbour range h (~4x particle radius); live via window.DROPLET.cohesionRadius
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
@@ -56,10 +62,10 @@ const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f
 // exact normals), reflecting the skybox cubemap + screen-space refraction. (The old convex-hull +
 // Loop-subdivision surface was removed.)
 const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
-const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = 0.052f; // per-particle metaball sphere radius — the rendered sphere size (independent of the physical radius)
-const float  DROPLET_INFLUENCE_RADIUS = 0.13f;          // smooth-min blend k: bigger -> spheres merge into one coherent blob
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = 0.050f; // per-particle metaball sphere radius — the rendered sphere size (independent of the physical radius)
+const float  DROPLET_INFLUENCE_RADIUS = 0.075f;         // smooth-min blend k: bigger -> spheres merge into one coherent blob
 const float  DROPLET_ISO_THRESHOLD = -0.04f;            // surface iso level: inflate (+) / thin (-)
-const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
+const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.08f;                              // proxy-box slack; tight so leaves occlude the droplet (box is depth-tested) without much overdraw
 // Droplet reflection source: true -> the static skybox cubemap (cheap, consistent, and skips the
 // per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
 const bool   DROPLET_REFLECT_SKYBOX = true;
@@ -68,8 +74,8 @@ const size_t MAX_PARTICLES_COUNT = 600;                                  // tota
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
-const float LEAF_MIN_FRICTION = DROPLET_PARTICLE_MIN_FRICTION;
-const float LEAF_MAX_FRICTION = DROPLET_PARTICLE_MIN_FRICTION * 1.5f;
+const float LEAF_MIN_FRICTION = 0.04f; // low -> water slides easily along the leaf
+const float LEAF_MAX_FRICTION = 0.12f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
 const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC / 2;
@@ -106,6 +112,21 @@ const float PLANT_MAX_SCALE = 3.0f;
 const float PLANT_SCALE_STEP = 2.0;
 const float PLANT_GROW_CHANCE = 0.25f;
 const size_t PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD = 25;
+
+// Procedural branching-plant growth (see docs/plant-growth-references.md). A plant sprouts when
+// water accumulates, then grows its branch structure over PLANT_GROW_SECONDS up to mature height.
+const float  PLANT_GROW_SECONDS = 60.0f;  // time from sprout to full structure (the "1 minute")
+const float  PLANT_REBUILD_DG   = 0.006f; // re-mesh when growth advances this much (smooth, cheap)
+const size_t PLANT_MAX_COUNT    = 36;     // cap concurrent plants (vertex/perf budget)
+const float  LEAF_GROW_START       = 0.05f; // leaf scale at spawn (then ramps to 1)
+const float  LEAF_GROW_MIN_SECONDS = 1.5f;  // a leaf unfurls over this..max seconds (random per leaf)
+const float  LEAF_GROW_MAX_SECONDS = 4.5f;
+const float  DROPLET_SPAWN_ABOVE_LEAF = 0.4f; // spawn the droplet a little above the chosen top leaf
+// branch-skeleton spring joints (tune live): stiffness scales with branch thickness
+const float  JOINT_STIFFNESS_BASE = 1000.0f; // * (mass^2 + eps) per joint; live via window.WIND.stiffness
+const float  JOINT_DAMPING        = 0.7f;    // 0..1 spring damping; live via window.WIND.damping
+const float  JOINT_ANGLE_LIMIT    = 0.9f;    // max bend per joint (radians)
+const float  WIND_ACCEL           = 10.0f;   // wind acceleration on the branch bones; live via window.WIND.accel
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -248,10 +269,33 @@ struct Leaf
   math::vec3f initial_center;
   math::vec3f local_center; // mesh centroid in body-local space, to spawn droplets at the leaf's CURRENT pose
   scene::PointLight::Pointer point_light;
+  // a generated leaf grows in: scale ramps 0->1 over grow_duration s (random per leaf for diversity)
+  float full_scale = 1.0f;     // mature render/hull scale (the blade's world-length scale)
+  float grow_age = 0.0f;       // seconds since the leaf sprouted
+  float grow_duration = 0.0f;  // 0 = not a growing generated leaf (e.g. ground), >0 = ramp length
+  std::vector<std::shared_ptr<btCollisionShape>> hull_children; // keep compound children alive
+  bool on_skeleton = false;             // pinned to a branch bone (follows the swaying branch)
+  btRigidBody* skeleton_bone = nullptr; // the branch bone this leaf rides
+  btTransform  rest_local;              // leaf's rest pose in that bone's local frame (spring target tracks it)
 
   Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
     : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time, world_data))
     {}
+};
+
+// One branch as a physics-skeleton bone: a rigid body whose transform poses the branch's tube each
+// frame (the branch mesh is rebuilt by transforming each bone's local verts by its body transform).
+struct BoneBody
+{
+  std::shared_ptr<btCollisionShape>     shape;
+  std::shared_ptr<btDefaultMotionState> motion;
+  std::shared_ptr<btRigidBody>          body;
+  std::shared_ptr<btTypedConstraint>    joint; // 6-DOF spring to the parent bone (null for the root)
+  int   parent = -1;
+  float radius_world = 0.1f; // branch radius in world units
+  float mass = 0.0f;         // body mass; joint stiffness scales with mass^2 (structural joints >> twig joints)
+  std::vector<media::geometry::Vertex>           verts;   // bone-local, scaled to world units
+  std::vector<media::geometry::Mesh::index_type> indices;
 };
 
 struct Plant
@@ -259,6 +303,17 @@ struct Plant
   scene::Mesh::Pointer mesh;
   scene::PointLight::Pointer point_light;
   float scale = 1.0f;
+  // procedural branching-plant state: grows from a sprout to full structure over PLANT_GROW_SECONDS.
+  launcher::PlantParams params;
+  math::vec3f base_position;   // world position of the plant base
+  float age = 0.0f;            // seconds since it sprouted
+  float growth = 0.0f;         // g in [0,1] = age / PLANT_GROW_SECONDS
+  float built_growth = -1.0f;  // g the current mesh was built at (rebuild throttle)
+  std::vector<launcher::LeafSlot> slots; // leaf attachment slots (local space), each with a birth_g
+  std::vector<char> slot_spawned;        // whether a physics leaf has been spawned for each slot
+  // physics skeleton (built once the plant is fully grown; the branch mesh then follows it)
+  bool skeletonized = false;
+  std::vector<BoneBody> bones;
 };
 
 struct PlantLight
@@ -274,16 +329,15 @@ struct LiveTuning
   float metaball_radius = DROPLET_RAYMARCH_PARTICLE_RADIUS;
   float influence       = DROPLET_INFLUENCE_RADIUS;
   float iso             = DROPLET_ISO_THRESHOLD;
-  float force           = DROPLET_PARTICLE_FORCE;
-  float damping         = DROPLET_PARTICLE_DAMPING;
-  int   particles_per_droplet = 30; // physics particles spawned per droplet (tuned)
+  float force           = DROPLET_SURFACE_TENSION; // pairwise cohesion strength (gamma)
+  float damping         = DROPLET_VISCOSITY;       // pairwise viscosity
+  float cohesion_radius = DROPLET_COHESION_RADIUS; // neighbour range h
+  int   particles_per_droplet = 20; // physics particles spawned per droplet (~1.5x fewer)
   float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
-
-  // follow camera (window.CAMERA.* in dist/index.html): a chase cam that trails the droplet holding the target particle
-  bool  cam_follow      = true;  // on by default; off -> normal free camera
-  float cam_distance    = 11.0f;  // steady comfortable trailing distance (world units) - calm overview, not zoomed-in
-  float cam_smooth      = 0.8f;  // follow responsiveness; lower = more inertia/lag (compensates fast impulses)
-  float cam_height      = 0.45f; // how high above the droplet the camera rides (up component of the offset dir)
+  // branch-skeleton knobs (window.WIND.* sliders)
+  float wind_accel      = WIND_ACCEL;
+  float joint_stiffness = JOINT_STIFFNESS_BASE;
+  float joint_damping   = JOINT_DAMPING;
 };
 
 struct Droplet
@@ -547,14 +601,10 @@ struct WaterSurface
 
 struct World::Impl: RigidBodyWorldCommonData
 {
-  media::geometry::Model leaf_model;
+  media::geometry::Model leaf_model; // still loaded for its leaf_color.png texture; geometry no longer used for leaves
   media::geometry::Model plant_model;
   scene::Node::Pointer scene_root;
   scene::Camera::Pointer camera;
-  math::vec3f follow_cam_pos;   // smoothed chase-camera position (follow mode)
-  math::vec3f follow_look;      // smoothed look-at target (follow mode)
-  bool follow_init = false;     // false -> snap to the droplet on (re)enable
-  std::weak_ptr<PhysBodySync> follow_particle; // the tracked particle; we follow whichever droplet holds it until it dies
   std::shared_ptr<btDefaultCollisionConfiguration> collision_configuration;
   std::shared_ptr<btCollisionDispatcher> dispatcher;
   std::shared_ptr<btBroadphaseInterface> broadphase;
@@ -570,11 +620,15 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<Leaf> leaves;
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
+  std::vector<btVector3> st_pos, st_vel, st_acc; // reused scratch for pairwise surface-tension (no per-frame alloc)
   Material droplet_material;
   Material droplet_fluid_material;
   Material sky_material;
   Material water_material;
+  Material flower_material; // procedural flowers/branches (vertex-colour lit; tag "flower")
+  Material leaf_render_material; // generated leaves, textured with the real leaf_color.png (tag ""/forward_lighting)
   std::vector<std::shared_ptr<Plant>> plants;
+  float wind_time = 0.0f; // accumulates dt; drives the wind gusts on the branch skeleton
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
@@ -646,10 +700,29 @@ struct World::Impl: RigidBodyWorldCommonData
     TextureList water_textures = water_material.textures();
     water_textures.insert("skyTexture", sky_texture);
 
+    flower_material.set_shader_tags("flower"); // generator paints per-vertex; shader lights it (no texture)
+
+    // Textured leaf material: the real leaf_color.png as albedo (lit by forward_lighting + moonlight).
+    // Loaded from the correct MEMFS path -- leaf.mtl's "../textures/..." path does NOT resolve, which is
+    // why the leaf.obj material rendered black; this binds the texture explicitly.
+    {
+      Texture leaf_diffuse = render_device.create_texture2d("media/textures/leaf_color.png");
+      Texture leaf_normal  = render_device.create_texture2d("media/textures/leaf_normal.png");
+      leaf_diffuse.set_min_filter(TextureFilter_LinearMipLinear);
+      leaf_diffuse.set_mag_filter(TextureFilter_Linear);
+      leaf_normal.set_min_filter(TextureFilter_LinearMipLinear);
+      leaf_normal.set_mag_filter(TextureFilter_Linear);
+      leaf_render_material.set_shader_tags("leaf"); // dedicated leaf pass (textured, no alpha discard)
+      TextureList leaf_textures = leaf_render_material.textures();
+      leaf_textures.insert("diffuseTexture", leaf_diffuse);
+    }
+
     materials.insert(DROPLET_HULL_MATERIAL, droplet_material);
     materials.insert(DROPLET_FLUID_MATERIAL, droplet_fluid_material);
     materials.insert(SKY_MATERIAL, sky_material);
     materials.insert(WATER_SURFACE_MATERIAL_NAME, water_material);
+    materials.insert("flower", flower_material);
+    materials.insert("leaf", leaf_render_material);
 
       //scale meshes
 
@@ -658,9 +731,9 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //create leaves
 
-     //add_stem(math::vec3f(0.0f, 0.0f, 0.0f), math::quatf());
-    add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
-     //add_stem(math::vec3f(0.0f), to_quat(math::rotate(math::degree(-65.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
+      //the static demo tree (add_stem) is replaced by one procedural plant that GROWS from a sprout;
+      //its leaves are spawned as real leaf-blade physics bodies as it grows (see spawn_initial_plant).
+     //add_stem(STEAM_POSITION, to_quat(math::rotate(math::degree(90.0f), math::vec3f(0.0f, 1.0f, 0.0f))));
 
       //configure physics
 
@@ -683,6 +756,7 @@ struct World::Impl: RigidBodyWorldCommonData
 
     setup_ground();
     setup_fireflies(scene_renderer);
+    spawn_initial_plant();
 
     if (!gContactAddedCallback)
     {
@@ -1017,6 +1091,192 @@ struct World::Impl: RigidBodyWorldCommonData
     }
   }
 
+  // Quaternion rotating unit vector a onto unit vector b.
+  math::quatf quat_from_to(const math::vec3f& a, const math::vec3f& b)
+  {
+    math::vec3f an = math::normalize(a), bn = math::normalize(b);
+    float d = math::dot(an, bn);
+    if (d > 0.9999f)
+      return to_quat(math::radian(0.0f), math::vec3f(0, 1, 0));
+    if (d < -0.9999f)
+    {
+      math::vec3f perp = std::fabs(an.x) < 0.9f ? math::vec3f(1, 0, 0) : math::vec3f(0, 1, 0);
+      return to_quat(math::radian(math::constf::pi), math::normalize(math::cross(an, perp)));
+    }
+    return to_quat(math::radian(acos(d)), math::normalize(math::cross(an, bn)));
+  }
+
+  // Orient a leaf blade so it lies roughly FLAT: its broad face (normal = local +Y) points UP with a
+  // small random tilt, and its long axis (local +X) points horizontally outward along `dir`. Leaves
+  // then face the sky/rain instead of standing on edge.
+  math::quatf leaf_orientation(const math::vec3f& dir)
+  {
+      //leaf normal = up + a small random tilt (~14 deg) for diversity
+    math::vec3f n = math::normalize(math::vec3f(crand() * 0.18f, 1.0f, crand() * 0.18f));
+
+      //long axis = horizontal outward component of the branch's leaf direction, made perpendicular to n
+    math::vec3f f(dir.x, 0.0f, dir.z);
+    if (math::qlen(f) < 1e-4f) f = math::vec3f(crand(), 0.0f, crand());
+    f = f - n * math::dot(f, n);
+    if (math::qlen(f) < 1e-4f) f = math::vec3f(1, 0, 0);
+    f = math::normalize(f);
+
+    math::quatf q1 = quat_from_to(math::vec3f(1, 0, 0), f); // +X -> outward
+    math::vec3f n1 = q1 * math::vec3f(0, 1, 0);
+    float c = math::dot(n1, n); c = c < -1.f ? -1.f : (c > 1.f ? 1.f : c);
+    float s = math::dot(math::cross(n1, n), f);
+    math::quatf q2 = to_quat(math::radian(atan2(s, c)), f); // twist +Y -> n (face up)
+    return q2 * q1;
+  }
+
+  // Spawn one PROCEDURAL leaf (petiole "leg" + textured blade, generated per-seed for diversity) as a
+  // physics body pinned at its leg base. The collision is a CONCAVE V-trough COMPOUND (so droplets
+  // collect in the leaf instead of rolling off a convex hull). `length` = blade length in world units;
+  // the geometry is already at that size with the attach point at the origin.
+  void spawn_leaf(const math::vec3f& world_pos, const math::quatf& rotation, float length, uint32_t seed)
+  {
+    media::geometry::Mesh leaf_mesh;
+    launcher::generate_leaf(leaf_mesh, seed, length, "leaf");
+
+    uint32_t lvc = leaf_mesh.vertices_count();
+    if (lvc == 0)
+      return;
+
+      //blade centroid (for droplet spawn aim)
+    const media::geometry::Vertex* lv = leaf_mesh.vertices_data();
+    math::vec3f centroid(0.0f);
+    for (uint32_t i = 0; i < lvc; i++)
+      centroid += lv[i].position;
+    centroid /= (float) lvc;
+
+      //compound collision: a row of convex flaps forming a concave V-channel (see generate_leaf_collision)
+    std::vector<std::vector<math::vec3f>> pieces;
+    launcher::generate_leaf_collision(seed, length, pieces);
+
+    btCompoundShape* compound = new btCompoundShape();
+    std::vector<std::shared_ptr<btCollisionShape>> children;
+    btTransform child_tm;
+    child_tm.setIdentity();
+    for (size_t pi = 0; pi < pieces.size(); pi++)
+    {
+      const std::vector<math::vec3f>& piece = pieces[pi];
+      if (piece.size() < 4)
+        continue;
+      btConvexHullShape* ch = new btConvexHullShape();
+      for (size_t k = 0; k < piece.size(); k++)
+        ch->addPoint(btVector3(piece[k][0], piece[k][1], piece[k][2]), false);
+      ch->recalcLocalAabb();
+      children.push_back(std::shared_ptr<btCollisionShape>(ch));
+      compound->addChildShape(child_tm, ch);
+    }
+    if (children.empty())
+    {
+      delete compound;
+      return;
+    }
+    std::shared_ptr<btCollisionShape> shape(compound);
+
+    btVector3 bt_inertia(0, 0, 0);
+    shape->calculateLocalInertia(LEAF_MASS, bt_inertia);
+    math::vec3f local_inertia(bt_inertia.x(), bt_inertia.y(), bt_inertia.z());
+
+      //textured render node. The leaf grows in via the RENDER node scale only (collision stays full
+      //size -- scaling a compound's children is awkward, and the brief grow-in mismatch is harmless).
+    scene::Mesh::Pointer mesh = scene::Mesh::create();
+    mesh->set_mesh(leaf_mesh);
+    mesh->set_position(world_pos);
+    mesh->set_orientation(rotation);
+    mesh->set_scale(math::vec3f(LEAF_GROW_START));
+    mesh->bind_to_parent(*scene_root);
+
+    phys_bodies.push_back(std::make_shared<PhysBodySync>(shape, LEAF_MASS, local_inertia, world_pos, rotation, mesh, COLLISION_GROUP_LEAF, COLLISION_MASK_LEAF, dynamics_world));
+
+    Leaf leaf(last_frame_time, *this);
+    leaf.phys_body = phys_bodies.back();
+    leaf.hull_children = children; // keep the compound's child shapes alive for the leaf's lifetime
+    leaf.target_transform = leaf.phys_body->body->getWorldTransform();
+    leaf.local_center   = centroid;                          // blade centre (for droplet spawn aim)
+    leaf.initial_center = rotation * centroid + world_pos;
+    leaf.phys_body->body->setUserPointer(leaf.rigid_body_info.get());
+    leaf.phys_body->body->setFriction(crand(LEAF_MIN_FRICTION, LEAF_MAX_FRICTION));
+    // no gravity on generated leaves: they're pinned only at the spine base, so gravity would swing
+    // the blade down off the branch. Zeroing it keeps the leaf in its (normal-up) spawn pose; droplet
+    // impacts still nudge it (it springs back via the leaf return-force in update()).
+    leaf.phys_body->body->setGravity(btVector3(0, 0, 0));
+
+      //pin at the spine base (the body origin) so the leaf mounts there and swings from its petiole
+    btVector3 pivot(0.0f, 0.0f, 0.0f);
+    btTransform start;
+    start.setIdentity();
+    start.setOrigin(pivot);
+    start = leaf.phys_body->body->getWorldTransform() * start;
+
+    btVector3 anchor_inertia(0, 0, 0);
+    btRigidBody::btRigidBodyConstructionInfo rb_info(0.0f, nullptr, static_bind_shape.get(), anchor_inertia);
+    rb_info.m_startWorldTransform = start;
+    leaf.static_bind_body = std::make_shared<btRigidBody>(rb_info);
+    dynamics_world->addRigidBody(leaf.static_bind_body.get(), COLLISION_GROUP_LEAF, 0);
+
+    leaf.constraint = std::make_shared<btPoint2PointConstraint>(*leaf.phys_body->body, *leaf.static_bind_body,
+      pivot, btVector3(0, 0, 0));
+    dynamics_world->addConstraint(leaf.constraint.get(), true);
+
+      //leaf growth: ramp scale 0->1 over a random duration (diversity). Geometry is already world-size
+      //so full node scale is 1.
+    leaf.full_scale    = 1.0f;
+    leaf.grow_age      = 0.0f;
+    leaf.grow_duration = crand(LEAF_GROW_MIN_SECONDS, LEAF_GROW_MAX_SECONDS);
+
+    leaves.push_back(leaf);
+  }
+
+  // Grow each freshly-spawned leaf in: ramp its render-node scale and collision-hull scale from
+  // LEAF_GROW_START up to full over its (random) grow_duration. Called once per frame.
+  void update_leaf_growth(float dt)
+  {
+    for (Leaf& leaf : leaves)
+    {
+      if (leaf.grow_duration <= 0.0f || leaf.grow_age >= leaf.grow_duration)
+        continue;
+
+      leaf.grow_age += dt;
+      float t  = leaf.grow_age / leaf.grow_duration;
+      if (t > 1.0f) t = 1.0f;
+      float e  = t * t * (3.0f - 2.0f * t);                 // smoothstep ease
+      float f  = LEAF_GROW_START + (1.0f - LEAF_GROW_START) * e;
+
+      leaf.phys_body->mesh->set_scale(math::vec3f(leaf.full_scale * f)); // visual grow-in only
+    }
+  }
+
+  // One growing plant at the scene centre, sprouting from g=0 (see update_plants for the growth).
+  void spawn_initial_plant()
+  {
+    // root the plant AT the water surface so it emerges from the water and its mirror reflection
+    // meets it at the waterline (previously the plant floated ~6 units above the water -> detached
+    // reflection that read as a broken mirror).
+    generate_plant(math::vec3f(STEAM_POSITION.x, WATER_LEVEL, STEAM_POSITION.z));
+
+#if PLANT_DEBUG_FULLGROWN
+    {
+      // headless visual test: jump the plant to full growth + leaves at startup (the sim barely
+      // advances under Chrome's virtual time, so growth wouldn't otherwise be visible in a screenshot)
+      std::shared_ptr<Plant> pl = plants.back();
+      pl->growth = 1.0f;
+      pl->age = PLANT_GROW_SECONDS;
+      rebuild_plant(pl);
+      for (size_t i = 0; i < pl->slots.size(); i++)
+      {
+        const launcher::LeafSlot& slot = pl->slots[i];
+        math::vec3f wpos = pl->base_position + slot.pos * pl->scale;
+        spawn_leaf(wpos, leaf_orientation(slot.dir), slot.size * 3.0f, slot.seed);
+        pl->slot_spawned[i] = 1;
+      }
+      update_leaf_growth(100.0f); // grow the leaves in via the real path
+    }
+#endif
+  }
+
   // Remove the oldest n droplet particles (front of droplet_particles == generation order) from both
   // droplet_particles and the master phys_bodies, so ~PhysBodySync removes them from the Bullet world.
   void retire_oldest_droplet_particles(size_t n)
@@ -1059,15 +1319,32 @@ struct World::Impl: RigidBodyWorldCommonData
 
     last_droplet_generated_time = last_frame_time;
 
-    size_t leaf_index = DROPLET_INITIAL_LEAF % leaves.size();
+    // Spawn just above ONE of the HIGHEST leaves (random), so the droplet lands on that top leaf and
+    // travels down the plant to the bottom.
+    float y_hi = -1e30f, y_lo = 1e30f;
+    for (Leaf& lf : leaves)
+    {
+      float y = lf.phys_body->body->getWorldTransform().getOrigin().y();
+      if (y > y_hi) y_hi = y;
+      if (y < y_lo) y_lo = y;
+    }
+    float band = y_hi - 0.15f * (y_hi - y_lo); // only the highest ~15% of leaves
+
+    std::vector<size_t> top_leaves;
+    for (size_t i = 0; i < leaves.size(); i++)
+      if (leaves[i].phys_body->body->getWorldTransform().getOrigin().y() >= band)
+        top_leaves.push_back(i);
+
+    size_t leaf_index = top_leaves.empty()
+      ? 0
+      : top_leaves[(size_t) (frand() * top_leaves.size()) % top_leaves.size()];
     Leaf& leaf = leaves[leaf_index];
 
-    // Spawn above the leaf's CURRENT centroid. The leaf moves/tilts over time (physics + particle
-    // impacts), so spawning at the stale initial centre dropped droplets into empty air where the leaf
-    // used to be -> nothing landed -> "no droplets after a while".
+    // a little bit above the leaf's CURRENT centroid (the leaf tilts/moves over time, so use the live
+    // pose) -> the cluster falls onto the leaf and runs off it downward.
     btVector3 lc(leaf.local_center[0], leaf.local_center[1], leaf.local_center[2]);
     btVector3 c = leaf.phys_body->body->getWorldTransform() * lc;
-    math::vec3f spawn(c.x(), c.y() + 0.5f, c.z());
+    math::vec3f spawn(c.x(), c.y() + DROPLET_SPAWN_ABOVE_LEAF, c.z());
 
     generate_droplet(spawn);
   }
@@ -1138,32 +1415,300 @@ struct World::Impl: RigidBodyWorldCommonData
     droplet_particles.push_back(phys_bodies.back());
   }
 
-  void generate_plant()
+  // (Re)build a plant's branch geometry for its current growth and push it to the GPU.
+  void rebuild_plant(const std::shared_ptr<Plant>& plant)
   {
-      //try to grow existing plant
+    media::geometry::Mesh mesh;
+    launcher::generate_plant_mesh(mesh, plant->params, plant->growth);
+    if (mesh.primitives_count() > 0)
+      plant->mesh->set_mesh(mesh);
+    plant->built_growth = plant->growth;
+  }
 
-    if (frand() < PLANT_GROW_CHANCE)
-    {  
-      std::random_device rd;
-      std::mt19937 g(rd());
+  // Once the plant is fully grown, build a PHYSICS SKELETON: one kinematic rigid body per branch, baked
+  // into world space. From here the branch mesh follows the bodies (rebuild_skeleton_mesh). Phase 1 keeps
+  // the bodies kinematic at rest -> renders identically; later phases make them dynamic + jointed (wind/drag).
+  void finalize_skeleton(const std::shared_ptr<Plant>& plant)
+  {
+    std::vector<launcher::Bone> bones;
+    launcher::collect_bones(plant->params, bones);
 
-      std::shuffle(plants.begin(), plants.end(), g);
+    const float s = plant->scale;
+    const math::vec3f base = plant->base_position;
 
-      for (auto& plant : plants)
+    plant->bones.clear();
+    plant->bones.reserve(bones.size());
+
+    for (size_t i = 0; i < bones.size(); i++)
+    {
+      const launcher::Bone& src = bones[i];
+
+      BoneBody bb;
+      bb.parent  = src.parent;
+      bb.indices = src.indices;
+      bb.verts   = src.verts;
+      for (size_t v = 0; v < bb.verts.size(); v++)
+        bb.verts[v].position = bb.verts[v].position * s;     // bone-local, scaled to world units
+
+      math::vec3f origin_world = base + src.rest_base * s;    // bone origin = the joint to its parent
+
+      btConvexHullShape* hull = new btConvexHullShape();
+      for (size_t v = 0; v < bb.verts.size(); v++)
+        hull->addPoint(btVector3(bb.verts[v].position.x, bb.verts[v].position.y, bb.verts[v].position.z), false);
+      hull->recalcLocalAabb();
+      bb.shape = std::shared_ptr<btCollisionShape>(hull);
+
+      btTransform t;
+      t.setIdentity();
+      t.setOrigin(btVector3(origin_world.x, origin_world.y, origin_world.z));
+      bb.motion = std::make_shared<btDefaultMotionState>(t);
+
+      bool is_root = (bb.parent < 0);
+
+        //root = fixed anchor (mass 0). other bones = dynamic, jointed to the parent by a spring.
+      float mass = 0.0f;
+      btVector3 inertia(0, 0, 0);
+      if (!is_root)
       {
-        if (plant->scale >= PLANT_MAX_SCALE)
-          continue;
+        float lw = math::length(src.rest_tip - src.rest_base) * s;
+        float rw = src.radius * s;
+        mass = 40.0f * rw * rw * lw;
+        mass = mass < 0.05f ? 0.05f : (mass > 8.0f ? 8.0f : mass);
+        hull->calculateLocalInertia(mass, inertia);
+      }
 
-        plant->scale *= PLANT_SCALE_STEP;
+      bb.radius_world = src.radius * s;
+      bb.mass         = mass;
 
-        plant->mesh->set_scale(math::vec3f(plant->scale));
+      btRigidBody::btRigidBodyConstructionInfo ci(mass, bb.motion.get(), hull, inertia);
+      bb.body = std::make_shared<btRigidBody>(ci);
+      bb.body->setActivationState(DISABLE_DEACTIVATION);
+      if (!is_root)
+        bb.body->setGravity(btVector3(0, 0, 0)); // springs hold the rest pose; wind/drag move it
+      dynamics_world->addRigidBody(bb.body.get(), COLLISION_GROUP_LEAF, 0); // mask 0: skeleton-internal, collides with nothing
 
-        return;
+      plant->bones.push_back(bb);
+
+        //spring joint to the parent at this bone's base (lock translation, allow limited bending)
+      if (!is_root)
+      {
+        BoneBody& self = plant->bones.back();
+        btRigidBody* parent_body = plant->bones[self.parent].body.get();
+        math::vec3f parent_origin = base + bones[self.parent].rest_base * s;
+
+        btTransform frameA; frameA.setIdentity();
+        frameA.setOrigin(btVector3(origin_world.x - parent_origin.x,
+                                   origin_world.y - parent_origin.y,
+                                   origin_world.z - parent_origin.z));
+        btTransform frameB; frameB.setIdentity();
+
+        btGeneric6DofSpringConstraint* spring =
+          new btGeneric6DofSpringConstraint(*parent_body, *self.body.get(), frameA, frameB, true);
+        spring->setLinearLowerLimit(btVector3(0, 0, 0));
+        spring->setLinearUpperLimit(btVector3(0, 0, 0));   // no stretch
+        float lim = JOINT_ANGLE_LIMIT;
+        spring->setAngularLowerLimit(btVector3(-lim, -lim, -lim));
+        spring->setAngularUpperLimit(btVector3( lim,  lim,  lim));
+        float k = joint_stiffness_for(bb); // mass^2-scaled: structural joints >> twig joints
+        for (int a = 3; a < 6; a++)
+        {
+          spring->enableSpring(a, true);
+          spring->setStiffness(a, k);
+          spring->setDamping(a, live.joint_damping);
+          spring->setEquilibriumPoint(a, 0.0f);
+        }
+        self.joint = std::shared_ptr<btTypedConstraint>(spring);
+        dynamics_world->addConstraint(spring, true);
       }
     }
 
-      //generate new plant
-    
+      //reattach each leaf to its NEAREST branch bone (was pinned to a static anchor), so leaves follow
+      //the swaying branches and dragging a leaf pulls its branch -> propagates down to the root.
+    for (Leaf& leaf : leaves)
+    {
+      if (leaf.on_skeleton)
+        continue;
+      btVector3 lp = leaf.phys_body->body->getWorldTransform().getOrigin();
+      int best = -1;
+      float bestd = 1e30f;
+      for (size_t b = 0; b < bones.size(); b++)
+      {
+        math::vec3f mid = base + (bones[b].rest_base + bones[b].rest_tip) * 0.5f * s;
+        float d = (lp - btVector3(mid.x, mid.y, mid.z)).length2();
+        if (d < bestd) { bestd = d; best = (int) b; }
+      }
+      if (best < 0)
+        continue;
+
+      btRigidBody* bone_body = plant->bones[best].body.get();
+      if (leaf.constraint)       dynamics_world->removeConstraint(leaf.constraint.get());
+      if (leaf.static_bind_body) dynamics_world->removeRigidBody(leaf.static_bind_body.get());
+
+      btVector3 bone_origin = bone_body->getWorldTransform().getOrigin();
+      btVector3 pivot_in_bone = lp - bone_origin; // bone rest rotation is identity
+      leaf.constraint = std::make_shared<btPoint2PointConstraint>(*leaf.phys_body->body, *bone_body,
+        btVector3(0, 0, 0), pivot_in_bone);
+      dynamics_world->addConstraint(leaf.constraint.get(), true);
+
+      leaf.on_skeleton   = true;
+      leaf.skeleton_bone = bone_body;
+      leaf.rest_local    = bone_body->getWorldTransform().inverse() * leaf.target_transform; // pose relative to the bone
+    }
+
+    plant->skeletonized = true;
+    plant->mesh->set_position(math::vec3f(0.0f)); // the rebuilt skeleton mesh is already in world space
+    plant->mesh->set_scale(math::vec3f(1.0f));
+    rebuild_skeleton_mesh(plant);
+  }
+
+  // Rebuild the branch mesh from the live bone-body transforms (the skeleton drives the geometry).
+  void rebuild_skeleton_mesh(const std::shared_ptr<Plant>& plant)
+  {
+    std::vector<media::geometry::Vertex>           verts;
+    std::vector<media::geometry::Mesh::index_type> indices;
+
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      const BoneBody& bb = plant->bones[b];
+      if (verts.size() + bb.verts.size() > 64000)
+        break; // uint16 index budget
+
+      const btTransform& T = bb.body->getWorldTransform();
+      const btMatrix3x3& R = T.getBasis();
+      const btVector3&   O = T.getOrigin();
+      uint32_t base_idx = (uint32_t) verts.size();
+
+      for (size_t v = 0; v < bb.verts.size(); v++)
+      {
+        const math::vec3f& lp = bb.verts[v].position;
+        const math::vec3f& ln = bb.verts[v].normal;
+        btVector3 wp = T * btVector3(lp.x, lp.y, lp.z);
+        btVector3 wn = R * btVector3(ln.x, ln.y, ln.z);
+        media::geometry::Vertex o = bb.verts[v];
+        o.position = math::vec3f(wp.x(), wp.y(), wp.z());
+        o.normal   = math::vec3f(wn.x(), wn.y(), wn.z());
+        verts.push_back(o);
+      }
+      (void) O;
+      for (size_t k = 0; k < bb.indices.size(); k++)
+        indices.push_back((media::geometry::Mesh::index_type) (base_idx + bb.indices[k]));
+    }
+
+    if (verts.empty())
+      return;
+
+    media::geometry::Mesh mesh;
+    mesh.add_primitive("flower", media::geometry::PrimitiveType_TriangleList,
+      &verts[0], (media::geometry::Mesh::index_type) verts.size(), &indices[0], (uint32_t) indices.size());
+    plant->mesh->set_mesh(mesh);
+  }
+
+  // Joint spring stiffness for a bone: scales with mass^2 so a thick structural joint (carrying a big
+  // subtree) is ~1000x stiffer than a twig joint, instead of the ~10x a radius term gives. That keeps
+  // the trunk/main limbs from folding under wind while leaving the twigs springy. Tuned live.
+  float joint_stiffness_for(const BoneBody& bb) const
+  {
+    return live.joint_stiffness * (bb.mass * bb.mass + 0.0008f);
+  }
+
+  // Push the branch skeleton with OSCILLATING wind so the tree sways back and forth (rather than a
+  // one-way shove that folds it downwind). drive swings through zero; a per-bone phase desyncs branches.
+  void apply_wind(const std::shared_ptr<Plant>& plant)
+  {
+    float t = wind_time;
+    float swell = 0.7f + 0.3f * std::sin(t * 0.30f); // slow breeze envelope (always positive)
+    math::vec3f dir = math::normalize(math::vec3f(1.0f, 0.0f, 0.35f));
+
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      BoneBody& bb = plant->bones[b];
+      if (bb.parent < 0 || bb.body->getInvMass() <= 0.0f)
+        continue;
+      float m    = 1.0f / bb.body->getInvMass();
+      float ph   = (float) b * 0.7f;
+      float sway = std::sin(t * 1.6f + ph) + 0.4f * std::sin(t * 3.3f + ph * 1.7f);
+      float drive = swell * (0.30f + 0.9f * sway); // oscillates ± -> sway, with a slight downwind bias
+      math::vec3f f = dir * (m * live.wind_accel * drive);
+      bb.body->applyCentralForce(btVector3(f.x, f.y, f.z));
+      bb.body->activate(true);
+    }
+  }
+
+  // Push the live stiffness/damping sliders into the existing spring joints (so the branches can be
+  // tuned from stiff to springy without a rebuild). Cheap: ~one downcast + 3 axes per branch.
+  void update_joint_params(const std::shared_ptr<Plant>& plant)
+  {
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      BoneBody& bb = plant->bones[b];
+      btGeneric6DofSpringConstraint* spring = dynamic_cast<btGeneric6DofSpringConstraint*>(bb.joint.get());
+      if (!spring)
+        continue;
+      float k = joint_stiffness_for(bb);
+      for (int a = 3; a < 6; a++)
+      {
+        spring->setStiffness(a, k);
+        spring->setDamping(a, live.joint_damping);
+      }
+    }
+  }
+
+  // Advance every still-growing plant by dt; re-mesh when growth moved enough (called each frame).
+  void update_plants(float dt)
+  {
+    wind_time += dt;
+
+    for (auto& plant : plants)
+    {
+      if (!plant->skeletonized)
+      {
+        if (plant->growth < 1.0f)
+        {
+          plant->age   += dt;
+          plant->growth = std::min(1.0f, plant->age / PLANT_GROW_SECONDS);
+          rebuild_plant(plant); // rebuild every frame while growing -> smooth, continuous growth
+        }
+      }
+      else
+      {
+        update_joint_params(plant); // live stiffness/damping sliders
+        apply_wind(plant);
+        rebuild_skeleton_mesh(plant); // branch mesh follows the physics skeleton
+      }
+
+        //spawn a real leaf-blade physics body for each slot whose birth has been reached
+      for (size_t i = 0; i < plant->slots.size(); i++)
+      {
+        if (plant->slot_spawned[i])
+          continue;
+
+        const launcher::LeafSlot& slot = plant->slots[i];
+
+        if (plant->growth < slot.birth_g)
+          continue;
+
+        // slot.pos is local (scaled into the world by plant->scale); slot.size is already a world
+        // length. 2x bigger than the previous leaves, per request.
+        math::vec3f wpos = plant->base_position + slot.pos * plant->scale;
+        float world_len  = slot.size * 3.0f;
+
+        spawn_leaf(wpos, leaf_orientation(slot.dir), world_len, slot.seed);
+        plant->slot_spawned[i] = 1;
+      }
+
+        //fully grown -> build the physics skeleton (after all leaves have spawned)
+      if (!plant->skeletonized && plant->growth >= 1.0f)
+        finalize_skeleton(plant);
+    }
+  }
+
+  void generate_plant()
+  {
+      //water accumulated -> sprout a new plant (growth itself is driven by time, see update_plants)
+
+    if (plants.size() >= PLANT_MAX_COUNT)
+      return;
+
     math::vec3f position(crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS, PLANT_GENERATION_HEIGHT, crand() * PLANT_GENERATION_RADIUS + PLANT_SAFE_ZONE_RADIUS);
 
     generate_plant(position);
@@ -1173,20 +1718,32 @@ struct World::Impl: RigidBodyWorldCommonData
   {
     std::shared_ptr<Plant> plant = std::make_shared<Plant>();
 
+      //fresh random shape/colour each app run, then sprout at g=0 (it grows in over time)
+    uint32_t seed = ((uint32_t) (frand() * 4294967040.0f)) ^ 0x9e3779b9u;
+    plant->params        = launcher::make_plant_params(seed);
+    plant->base_position = position;
+    plant->age           = 0.0f;
+    plant->growth        = 0.0f;
+
+      //size the plant so its MATURE structure (branches stack past the trunk) reaches target_height.
+      //Measured once from a full-growth build; the node scale then holds while the geometry grows in.
+    media::geometry::Mesh full;
+    launcher::generate_plant_mesh(full, plant->params, 1.0f);
+    float full_height = 0.0f;
+    for (uint32_t i = 0, n = full.vertices_count(); i < n; i++)
+      full_height = std::max(full_height, full.vertices_data()[i].position.y);
+    plant->scale = full_height > 1e-3f ? plant->params.target_height / full_height : 1.0f;
+
+      //leaf attachment slots (each spawns a physics leaf when growth passes its birth_g)
+    launcher::collect_leaf_slots(plant->params, plant->slots);
+    plant->slot_spawned.assign(plant->slots.size(), 0);
+
     plant->mesh = scene::Mesh::create();
 
     plant->mesh->set_position(position);
-    plant->mesh->set_mesh(plant_model.mesh);
+    plant->mesh->set_scale(math::vec3f(plant->scale));
+    rebuild_plant(plant);
     plant->mesh->bind_to_parent(*scene_root);
-
-    plant->point_light = scene::PointLight::create();
-
-    plant->point_light->set_light_color(math::vec3f(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY), crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY)));
-    plant->point_light->set_attenuation(LIGHTS_ATTENUATION);
-    plant->point_light->set_intensity(crand(LIGHTS_MIN_INTENSITY, LIGHTS_MAX_INTENSITY));
-    plant->point_light->set_range(crand(LIGHTS_MIN_RANGE, LIGHTS_MAX_RANGE));
-
-    //plant->point_light->bind_to_parent(*plant->mesh);
 
     plants.push_back(plant);
   }
@@ -1201,111 +1758,81 @@ struct World::Impl: RigidBodyWorldCommonData
     live.metaball_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.metaballRadius != null) ? window.DROPLET.metaballRadius : $0; }, (double) DROPLET_RAYMARCH_PARTICLE_RADIUS);
     live.influence       = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.influence      != null) ? window.DROPLET.influence      : $0; }, (double) DROPLET_INFLUENCE_RADIUS);
     live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
-    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
-    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
-    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 30);
+    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_SURFACE_TENSION);
+    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_VISCOSITY);
+    live.cohesion_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.cohesionRadius != null) ? window.DROPLET.cohesionRadius : $0; }, (double) DROPLET_COHESION_RADIUS);
+    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 20);
     live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
-
-    live.cam_follow      = EM_ASM_INT   ({ return (window.CAMERA && window.CAMERA.follow != null)     ? (window.CAMERA.follow ? 1 : 0) : $0; }, 1) != 0;
-    live.cam_distance    = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.distance   != null) ? window.CAMERA.distance   : $0; }, 11.0);
-    live.cam_smooth      = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.smooth     != null) ? window.CAMERA.smooth     : $0; }, 0.8);
-    live.cam_height      = (float) EM_ASM_DOUBLE({ return (window.CAMERA && window.CAMERA.height     != null) ? window.CAMERA.height     : $0; }, 0.45);
+    live.wind_accel      = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.accel      != null) ? window.WIND.accel      : $0; }, (double) WIND_ACCEL);
+    live.joint_stiffness = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.stiffness  != null) ? window.WIND.stiffness  : $0; }, (double) JOINT_STIFFNESS_BASE);
+    live.joint_damping   = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.damping    != null) ? window.WIND.damping    : $0; }, (double) JOINT_DAMPING);
 #endif
   }
 
-  // True when the follow (chase) camera is enabled -> main.cpp yields keyboard/mouse camera control to World.
-  bool is_follow_camera() const { return live.cam_follow; }
-
-  // Smoothly trail the droplet that holds the tracked particle: frame it small + centred, sit a bit
-  // above/behind, and lag fast moves. The tracked particle is kept until it dies (falls/destroyed),
-  // then a fresh one is picked - so the camera commits to a droplet instead of hopping to the largest.
-  void update_follow_camera(float dt)
+  // SPH-style surface tension (Akinci et al. 2013): for every near pair of particles within a droplet,
+  // a COHESION force pulls them together with a kernel that is zero at contact and at the cohesion
+  // radius h and peaks in between (so the cluster minimises surface area without imploding), plus a
+  // VISCOSITY force that damps only their RELATIVE velocity (internal jiggle settles, bulk fall kept).
+  // Bullet's sphere collisions provide the short-range repulsion. O(n^2) per cluster; clustering keeps
+  // n modest and the particle budget caps the worst case.
+  void apply_droplet_surface_tension()
   {
-    if (!live.cam_follow)
-    {
-      follow_init = false;
+    const float h = live.cohesion_radius;
+    if (h <= 1.0e-4f)
       return;
-    }
+    const float h2    = h * h;
+    const float gamma = live.force;   // cohesion strength (surface tension)
+    const float visc  = live.damping; // relative-velocity damping
 
-      //keep a live target particle; re-pick only once the current one is gone
-
-    std::shared_ptr<PhysBodySync> particle = follow_particle.lock();
-    bool alive = particle && particle->droplet_particle && !particle->droplet_particle->fallen;
-
-    if (!alive)
+    for (std::shared_ptr<Droplet>& droplet : droplets)
     {
-      // Prefer a droplet that has dropped below the canopy (y < 0 = below the tree base, so clear of
-      // foliage) and is highest among those - i.e. just started falling, so we ride the whole clean fall.
-      // Fall back to the lowest droplet overall if nothing is below the canopy yet.
-      const float CANOPY_BOTTOM = 0.0f;
-      Droplet* pick = nullptr;
-      for (auto& d : droplets)
-        if (!d->bodies.empty() && d->center.y < CANOPY_BOTTOM && (!pick || d->center.y > pick->center.y))
-          pick = d.get();
-      if (!pick)
-        for (auto& d : droplets)
-          if (!d->bodies.empty() && (!pick || d->center.y < pick->center.y))
-            pick = d.get();
+      std::vector<std::shared_ptr<PhysBodySync>>& b = droplet->bodies;
+      const size_t n = b.size();
+      if (n < 2)
+        continue;
 
-      particle = (pick && !pick->bodies.empty()) ? pick->bodies.front() : nullptr;
-      follow_particle = particle;
+      st_pos.clear(); st_vel.clear();
+      st_pos.reserve(n); st_vel.reserve(n);
+      st_acc.assign(n, btVector3(0.0f, 0.0f, 0.0f));
+      for (size_t i = 0; i < n; i++)
+      {
+        st_pos.push_back(b[i]->body->getWorldTransform().getOrigin());
+        st_vel.push_back(b[i]->body->getLinearVelocity());
+      }
+
+      // each unordered pair once (j>i); the pair's accel is equal-and-opposite (equal masses), so apply
+      // +to i and -to j -> half the work of the naive i!=j double loop, same result.
+      for (size_t i = 0; i < n; i++)
+      {
+        const btVector3& pi = st_pos[i];
+        const btVector3& vi = st_vel[i];
+        for (size_t j = i + 1; j < n; j++)
+        {
+          btVector3 d  = pi - st_pos[j];
+          float     r2 = d.length2();
+          if (r2 >= h2 || r2 < 1.0e-10f)
+            continue;
+          float r   = std::sqrt(r2);
+          float x   = r / h;                    // 0..1
+          float w   = 4.0f * x * (1.0f - x);    // cohesion kernel: 0 at contact & at h, peak mid
+          btVector3 dir = d / r;                // from j to i
+          btVector3 ai  = dir * (-gamma * w)              // cohesion: pull i toward j
+                        + (st_vel[j] - vi) * (visc * w);  // viscosity: match neighbour velocity
+          st_acc[i] += ai;
+          st_acc[j] -= ai;                      // Newton's 3rd law (equal masses)
+        }
+      }
+
+      // st_acc is an ACCELERATION; multiply by the particle mass so the tiny mass (0.002) doesn't blow
+      // it up. gamma/visc therefore read as accelerations, independent of the mass value.
+      for (size_t i = 0; i < n; i++)
+      {
+        float inv_m = b[i]->body->getInvMass();
+        float m     = inv_m > 0.0f ? 1.0f / inv_m : DROPLET_PARTICLE_MASS;
+        b[i]->body->applyCentralForce(st_acc[i] * m);
+        b[i]->body->activate(true);
+      }
     }
-
-    if (!particle)
-    {
-      follow_init = false; // nothing to follow yet (no droplets) -> hold
-      return;
-    }
-
-      //follow whichever droplet currently contains the tracked particle (else the particle itself)
-
-    Droplet* target = nullptr;
-    for (auto& d : droplets)
-      for (auto& b : d->bodies)
-        if (b.get() == particle.get()) { target = d.get(); break; }
-
-    math::vec3f center;
-    float radius;
-
-    if (target && !target->points.empty())
-    {
-      center = target->center;
-      radius = live.metaball_radius;
-      for (const math::vec3f& p : target->points)
-        radius = std::max(radius, length(p - center) + live.metaball_radius);
-    }
-    else
-    {
-      btVector3 o = particle->body->getWorldTransform().getOrigin();
-      center = math::vec3f(o.getX(), o.getY(), o.getZ());
-      radius = live.metaball_radius * 3.0f;
-    }
-
-      //CALM OVERVIEW: hold a steady comfortable distance (no zooming onto a tiny droplet) and a high
-      //vantage so the camera rides above the leaf canopy (foliage stays below the sight line), aiming a
-      //touch below the droplet toward where it's heading (the platform/water) so it sits upper-centre.
-
-    float dist = std::max(live.cam_distance, radius * 4.0f); // steady distance; never closer than the blob needs
-
-    math::vec3f offset_dir = normalize(math::vec3f(0.7f, std::max(0.3f, live.cam_height), 0.7f)); // mostly above + a bit behind
-    math::vec3f desired     = center + offset_dir * dist;
-    math::vec3f look_at     = center - math::vec3f(0.0f, dist * 0.16f, 0.0f); // lead toward the fall path
-
-    if (!follow_init)
-    {
-      follow_cam_pos = desired;
-      follow_look    = look_at;
-      follow_init    = true;
-    }
-    else
-    {
-      float a = 1.0f - std::exp(-std::max(0.1f, live.cam_smooth) * dt); // exponential smoothing -> inertia
-      follow_cam_pos += (desired - follow_cam_pos) * a;
-      follow_look    += (look_at - follow_look)    * a;
-    }
-
-    camera->set_position(follow_cam_pos);
-    camera->world_look_to(follow_look, math::vec3f(0.0f, 1.0f, 0.0f));
   }
 
   // Metaball-raymarch surface update for one droplet: position+scale the proxy box to enclose the
@@ -1389,12 +1916,22 @@ struct World::Impl: RigidBodyWorldCommonData
 
       //generate droplets
 
-    generate_droplet();    
+    generate_droplet();
+
+      //advance procedural plant growth (time-driven branch growth) + leaf unfurl
+
+    update_plants(clamped_dt);
+    update_leaf_growth(clamped_dt);
 
       //update leaves
 
     for (Leaf& leaf : leaves)
     {
+      if (leaf.on_skeleton && leaf.skeleton_bone)
+        // the leaf's rest pose tracks its (swaying) branch bone, so the spring restores it relative to
+        // the branch rather than to a fixed world pose; droplet/wind nudges still spring back.
+        leaf.target_transform = leaf.skeleton_bone->getWorldTransform() * leaf.rest_local;
+
       btRigidBody* body = leaf.phys_body->body.get();
       float inv_mass = body->getInvMass();
       float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
@@ -1645,11 +2182,11 @@ struct World::Impl: RigidBodyWorldCommonData
       }
     }
 
-      //generate plants
+      //a single procedural plant grows from startup (see spawn_initial_plant / update_plants); the old
+      //water-triggered multi-plant spawning is disabled. Keep the droplet-landing chime.
 
     if (fallen_droplet_particles_count > PLANT_FALLEN_DROPLET_PARTICLES_COUNT_THRESHOLD)
     {
-      generate_plant();
       SoundPlayer::play_sound(SoundId::droplet_ground);
       fallen_droplet_particles_count = 0;
     }
@@ -1662,48 +2199,15 @@ struct World::Impl: RigidBodyWorldCommonData
     for (std::shared_ptr<Droplet>& droplet : droplets)
       update_droplet_raymarch(droplet);
 
-    //apply sd to droplets
+    //surface tension: SPH-style PAIRWISE cohesion + viscosity between neighbouring particles within
+    //each droplet (Akinci et al. 2013). Cohesion attracts near pairs with a kernel that is 0 at contact
+    //and at the cohesion radius h and peaks in between -> the blob minimises surface area and holds
+    //together (necking/merging) WITHOUT collapsing toward a point (the old centroid spring did the
+    //latter, which read as wrong). Viscosity damps only the RELATIVE velocity of neighbours, so internal
+    //jiggle settles while the droplet's bulk fall is preserved. Bullet's sphere collisions supply the
+    //short-range repulsion, so equilibrium spacing sits near contact.
 
-    for (std::shared_ptr<Droplet>& droplet : droplets)
-    {
-      for (std::shared_ptr<PhysBodySync>& particle : droplet->bodies)
-      {
-        btVector3 bt_position = particle->body->getWorldTransform().getOrigin();
-        btVector3 bt_velocity = particle->body->getLinearVelocity();
-        math::vec3f position(bt_position.getX(), bt_position.getY(), bt_position.getZ());
-        math::vec3f velocity(bt_velocity.getX(), bt_velocity.getY(), bt_velocity.getZ());
-
-        //static const float TIME_STEP = 1.0f / 60.0f;
-
-        math::vec3f to_center = droplet->center - position;
-        float distance = length(to_center);
-
-        //pull toward the centroid (no upper gate, so spread stragglers get reclaimed instead of abandoned),
-        //with velocity damping so the spring settles into a blob instead of oscillating
-        if (distance > live.physical_radius * 4.0f) // was DROPLET_PARTICLE_MIN_INTERACTION_RADIUS (= physical * 4)
-        {
-          math::vec3f force = to_center * live.force - velocity * live.damping;
-          particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-        }
-
-        //static const float VELOCITY_BRAKE_FACTOR = 0.0001f;
-
-        //math::vec3f velocity_brake = -velocity * VELOCITY_BRAKE_FACTOR;
-
-        //particle->body->applyCentralForce(btVector3(velocity_brake[0], velocity_brake[1], velocity_brake[2]));
-
-        /*/ math::vec3f dir = droplet->center - position;
-
-        if (length(dir) < DROPLET_PARTICLE_FORCE_DISTANCE)
-        {
-          static const float DROPLET_PARTICLE_FORCE = .003f;
-          //math::vec3f force = position * DROPLET_PARTICLE_FORCE / particle->body->getInvMass() / TIME_STEP;
-          math::vec3f force = dir * DROPLET_PARTICLE_FORCE;
-
-          particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-        }*/
-      }
-    }
+    apply_droplet_surface_tension();
 
       //sync bodies with scene
 
@@ -1871,11 +2375,6 @@ World::~World()
 void World::update(float dt)
 {
   impl->update(dt);
-}
-
-bool World::is_follow_camera() const
-{
-  return impl->is_follow_camera();
 }
 
 /// Input control

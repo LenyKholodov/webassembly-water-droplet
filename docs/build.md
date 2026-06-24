@@ -386,15 +386,15 @@ break (the game still runs).
 Its entire contents:
 
 ```bash
-scp -r dist/* <user>@<your-host>:/var/www/html/droplet
+scp -r dist/* root@134.209.73.43:/var/www/html/droplet
 ```
 
 It copies everything in `dist/` (the JS/WASM bundle **plus** `index.html` and `sounds/`)
-to a remote web host over `scp`.
+to a specific DigitalOcean droplet over `scp`.
 
 ### Caveats &amp; recommendation
 
-1. **Hard-coded host &amp; path.** The `<user>@<your-host>:/var/www/html/droplet`
+1. **Hard-coded host &amp; path.** The `root@134.209.73.43:/var/www/html/droplet`
    destination is wired in. Parameterize it before reusing:
 
    ```bash

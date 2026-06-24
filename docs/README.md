@@ -4,7 +4,7 @@
 
 ## Gameplay
 
-**Water droplets** gather on the foliage on their own, run together into rounded blobs, and trickle down through the leaves — growing **new ferns** where they pool at the bottom. There's no score and no objective; you orbit the scene to find the droplets and watch the simulation unfold. The simulation is real — droplets are rigid bodies falling under [Bullet](https://github.com/bulletphysics/bullet3) physics, bouncing off the leaf geometry, and their liquid surface is a metaball SDF raymarched in a fragment shader.
+You **drag leaves** to stagger them, carving a path for physics-driven **water droplets** to fall. Guide the droplets all the way down and they fill the ground with **growing ferns**. The simulation is real — droplets are rigid bodies falling under [Bullet](https://github.com/bulletphysics/bullet3) physics, bouncing off whatever leaf geometry you have arranged.
 
 The game logic lives in [src/launcher/world.cpp](../src/launcher/world.cpp); the entry point and main loop are in [src/launcher/main.cpp](../src/launcher/main.cpp).
 
@@ -41,9 +41,8 @@ common  →  math  →  media  →  render/low_level  →  render/scene(+passes)
 
 | Action | Desktop | Mobile |
 | --- | --- | --- |
-| Orbit around the two ferns | Drag left/right (mouse held) | Drag left/right (one finger) |
-| Rise / descend (spiral) | Drag up/down (mouse held) | Drag up/down (one finger) |
-| Zoom in / out | Mouse wheel | Two-finger pinch |
+| Drag leaves | Left mouse button — click & drag | Touch & drag |
+| Move camera | `W` / `A` / `S` / `D` + right mouse button held | — |
 
 ## Quick start
 
@@ -72,8 +71,9 @@ open http://localhost:8080/
 | [build.md](build.md) | Makefile, Emscripten flags, output layout, and how to run locally. |
 | [asset-pipeline.md](asset-pipeline.md) | How textures, shaders, and meshes in `media/` are authored, embedded, and loaded. |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes over time. |
+| [open-source-readiness.md](open-source-readiness.md) | What remains before this is a clean public release. |
 | [plan.md](plan.md) | Prioritized backlog of physics/fluid-sim correctness, model, and performance fixes. |
 
 ## Project status
 
-Droplet is a working **demo**, not a finished product. The gameplay loop runs end to end and the engine is reasonably layered, but the source still carries demo-era rough edges (commented-out experiments, ad-hoc constants, no test suite).
+Droplet is a working **demo**, not a finished product. The gameplay loop runs end to end and the engine is reasonably layered, but the source still carries demo-era rough edges (commented-out experiments, ad-hoc constants, no test suite). Before treating this as a polished open-source release, read [open-source-readiness.md](open-source-readiness.md) for the outstanding cleanup, licensing, and packaging work.

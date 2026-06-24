@@ -2,6 +2,8 @@
 
 This document describes the full asset story for the **Droplet** WebAssembly demo: where assets live on disk, how each asset class is authored and loaded, how they are baked into the WASM bundle, how C++ code reads them at runtime, and how to add new assets. It also records the attribution/licensing obligations that ship with the art and audio.
 
+For the broader "what still needs doing before publishing" checklist, see [open-source-readiness.md](./open-source-readiness.md).
+
 ---
 
 ## 1. Directory Layout
@@ -276,4 +278,4 @@ These third-party assets carry attribution/license obligations that **must** be 
 
 Freesound filenames already embed the sound ID and uploader (`<id>__<user>__<title>.wav`), which is the canonical attribution anchor — preserve those names so credits stay traceable.
 
-Ensure every attribution entry above is preserved before the repository is made public.
+A consolidated CREDITS/attribution section and license audit are tracked in [open-source-readiness.md](./open-source-readiness.md); ensure every entry above is reflected there before the repository is made public.

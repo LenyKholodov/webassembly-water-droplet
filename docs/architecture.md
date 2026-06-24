@@ -303,8 +303,9 @@ Top-level directories and their roles (verified against the working tree):
 | [media/](../media) | Build-time-embedded assets: `shaders/*.glsl` (combined `#shader vertex`/`#shader pixel` programs), `meshes/*.{obj,mtl}` (Wavefront geometry), `textures/*` (diffuse/normal/specular maps + a 6-face skybox cubemap). Embedded into the WASM MEMFS via `--embed-file`. |
 | [third-party/](../third-party) | Vendored/submoduled dependencies. Currently `fast_obj/` (OBJ parser, a git submodule per [.gitmodules](../.gitmodules)). SDL2/SDL2_image, Bullet, and GLFW3 are pulled from Emscripten ports at build time, not vendored here. |
 | [dist/](../dist) | Browser deliverables: `index.html` (canvas + `Module` shell), generated `index.{js,wasm,wasm.map,data}` (git-ignored), and `sounds/` (audio fetched over HTTP at runtime, **not** embedded in the WASM FS). |
-| [docs/](../docs) | This documentation set: [README](README.md), [architecture](architecture.md), [entities](entities.md), [build](build.md), [asset-pipeline](asset-pipeline.md), [CHANGELOG](CHANGELOG.md), [plan](plan.md). |
+| [docs/](../docs) | This documentation set: [README](README.md), [architecture](architecture.md), [entities](entities.md), [build](build.md), [asset-pipeline](asset-pipeline.md), [CHANGELOG](CHANGELOG.md), [open-source-readiness](open-source-readiness.md), [plan](plan.md). |
 | [tmp/](../tmp) | Build scratch — the parallel object-file tree (`tmp/src/.../*.o`) produced by the Makefile. |
+| [stuff/](../stuff) | Local scratch/reference material — **untracked, not part of the build, and must not be published** (contains proprietary third-party binaries and CC-BY source assets). See [open-source-readiness.md](open-source-readiness.md). |
 | `Makefile` / `run-webserver.sh` / `deploy.sh` | The Emscripten build, the local Python dev server (`:8080`, matching the source-map base URL), and the `scp`-to-host deploy script. |
 
 ---

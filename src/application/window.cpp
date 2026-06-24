@@ -137,11 +137,7 @@ struct Window::Impl
   KeyHandler key_handler; //keyboard handler
   MouseButtonHandler mouse_button_handler; //mouse button handler
   MouseMoveHandler mouse_move_handler; //mouse move handler
-  WheelHandler wheel_handler; //scroll/wheel handler (desktop zoom)
-  PinchHandler pinch_handler; //two-finger pinch handler (touch zoom)
   bool touch_active; //is touch active
-  bool pinching = false; //two fingers down -> pinch-zooming (suppresses orbit)
-  double last_pinch_dist = 0.0; //previous two-finger distance (px)
 
   Impl(const char* in_title, unsigned int width, unsigned int height)
     : title(in_title)
@@ -191,7 +187,6 @@ struct Window::Impl
     glfwSetKeyCallback(window, key_callback_static);
     glfwSetMouseButtonCallback(window, mouse_button_callback_static);
     glfwSetCursorPosCallback(window, mouse_move_callback_static);
-    glfwSetScrollCallback(window, scroll_callback_static);
 
 #ifdef __EMSCRIPTEN__
     EMSCRIPTEN_RESULT res = emscripten_set_touchstart_callback("canvas", this, false, touch_start_callback_static);
@@ -237,24 +232,13 @@ struct Window::Impl
 
     impl->touch_active = true;
 
-    if (touch_event->numTouches >= 2)
-    {
-      //two fingers down -> begin a pinch zoom; cancel any single-finger drag in progress
-      const EmscriptenTouchPoint& a = touch_event->touches[0];
-      const EmscriptenTouchPoint& b = touch_event->touches[1];
-      double dx = a.targetX - b.targetX, dy = a.targetY - b.targetY;
-      impl->last_pinch_dist = std::sqrt(dx * dx + dy * dy);
-      impl->pinching = true;
-      impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
-      return 1;
-    }
-
     //hack to clear pressed button state sent by glfw (glfw sends mouse button press and mouse button release events for touch screens, but cursor coordinates are always 0, so use touch callbacks instead)
     impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
 
     //call touch move callback first to update touch positions
     touch_move_callback_static(event_type, touch_event, user_data);
 
+    //TODO multitouch handling
     impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_PRESS);
 
     return 1;
@@ -270,23 +254,7 @@ struct Window::Impl
     if (!impl)
       return 0;
 
-    if (touch_event->numTouches >= 2)
-    {
-      //pinch: feed the change in finger spacing to the zoom handler (no orbit while pinching)
-      const EmscriptenTouchPoint& a = touch_event->touches[0];
-      const EmscriptenTouchPoint& b = touch_event->touches[1];
-      double dx = a.targetX - b.targetX, dy = a.targetY - b.targetY;
-      double dist = std::sqrt(dx * dx + dy * dy);
-
-      if (impl->pinching && impl->pinch_handler)
-        impl->pinch_handler(dist - impl->last_pinch_dist);
-
-      impl->last_pinch_dist = dist;
-      impl->pinching = true;
-      impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
-      return 1;
-    }
-
+    //TODO multitouch handling
     const EmscriptenTouchPoint& touch = touch_event->touches[0];
 
     impl->mouse_move_callback(touch.targetX, touch.targetY, true);
@@ -302,8 +270,8 @@ struct Window::Impl
       return 0;
 
     impl->touch_active = false;
-    impl->pinching = false;
 
+    //TODO multitouch handling
     impl->mouse_button_callback(GLFW_MOUSE_BUTTON_1, GLFW_RELEASE);
 
     return 1;
@@ -399,29 +367,6 @@ struct Window::Impl
       engine_log_error("mouse move handler: %s", e.what());
     }
   }
-
-  static void scroll_callback_static(GLFWwindow* window, double xoffset, double yoffset)
-  {
-    Impl* impl = reinterpret_cast<Impl*>(glfwGetWindowUserPointer(window));
-
-    if (!impl)
-      return;
-
-    impl->scroll_callback(yoffset);
-  }
-
-  void scroll_callback(double delta)
-  {
-    try
-    {
-      if (wheel_handler)
-        wheel_handler(delta);
-    }
-    catch (std::exception& e)
-    {
-      engine_log_error("wheel handler: %s", e.what());
-    }
-  }
 };
 
 Window::Window(const char* title, unsigned int width, unsigned int height)
@@ -501,14 +446,4 @@ void Window::set_mouse_button_handler(const MouseButtonHandler& mouse_button_han
 void Window::set_mouse_move_handler(const MouseMoveHandler& mouse_move_handler)
 {
   impl->mouse_move_handler = mouse_move_handler;
-}
-
-void Window::set_wheel_handler(const WheelHandler& wheel_handler)
-{
-  impl->wheel_handler = wheel_handler;
-}
-
-void Window::set_pinch_handler(const PinchHandler& pinch_handler)
-{
-  impl->pinch_handler = pinch_handler;
 }

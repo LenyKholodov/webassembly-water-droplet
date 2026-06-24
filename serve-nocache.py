@@ -7,8 +7,6 @@ import os
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
-# host: pass "0.0.0.0" (default) to expose on the LAN (mobile testing), or "127.0.0.1" for localhost only
-HOST = sys.argv[2] if len(sys.argv) > 2 else "0.0.0.0"
 DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
 
 
@@ -36,6 +34,6 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 if __name__ == "__main__":
-    with Server((HOST, PORT), NoCacheHandler) as httpd:
-        print(f"no-cache server serving {DIRECTORY} at http://{HOST}:{PORT}/ (reachable on the LAN if HOST=0.0.0.0)")
+    with Server(("127.0.0.1", PORT), NoCacheHandler) as httpd:
+        print(f"no-cache server serving {DIRECTORY} at http://127.0.0.1:{PORT}/")
         httpd.serve_forever()

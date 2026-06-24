@@ -35,20 +35,6 @@ namespace
 
 const float CAMERA_MOVE_SPEED = 10.f;
 const float CAMERA_ROTATE_SPEED = 0.5f;
-// cylinder-orbit camera tuning. The orbit axis sits between the two stems (leaf_1/leaf_2 in leaf.obj,
-// at world ~(-1.67,2.34) and ~(-1.93,-4.69)); each is ~3.5 from this midpoint, so the radius stays
-// below that and the camera rides between the trees with a trunk always behind it.
-const float CAM_CENTER_X     = -1.80f;  // midpoint between the two stems (x)
-const float CAM_CENTER_Z     = -1.18f;  // midpoint between the two stems (z)
-const float CAM_ORBIT_SPEED  = 0.006f;  // radians of azimuth per pixel of horizontal drag
-const float CAM_HEIGHT_SPEED = 0.025f;  // world units of height per pixel of vertical drag
-const float CAM_HEIGHT_MIN   = -5.f;    // toward the water
-const float CAM_HEIGHT_MAX   = 8.f;     // above the canopy
-const float CAM_RADIUS_MIN   = 0.8f;    // closest zoom
-const float CAM_RADIUS_MAX   = 3.3f;    // farthest zoom (< ~3.5 trunk distance -> stays inside the two trees)
-const float CAM_LOOK_DOWN    = 1.6f;    // look this much below the camera height -> tilts down to follow falling droplets
-const float CAM_WHEEL_ZOOM   = 0.15f;   // radius change per wheel notch (desktop)
-const float CAM_PINCH_ZOOM   = 0.008f;  // radius change per pixel of pinch-distance change
 const float FOV_X_LANDSCAPE = 90.f;
 const float FOV_Y_PORTRAIT = 90.f;
 const math::vec3f LIGHTS_ATTENUATION(1, 0.75, 0.25);
@@ -61,9 +47,10 @@ const float LIGHTS_MAX_RANGE = 50.f;
 const size_t MESHES_COUNT = 100;
 const float MESHES_POSITION_RADIUS = 3.f;
 const float DRAG_OFFSET_MULTIPLIER = 10.f;
-const math::vec3f CAM_POS_AR_16_9(18.f, 12.f, -1.f);
-const math::vec3f CAM_POS_AR_1_1(9.f, 6.f, -1.f);
-const math::vec3f CAM_POS_AR_9_16(12.f, 8.f, -1.f);
+// framed for the tall (~18 m) procedural plant rooted at the water surface (y ~ -6)
+const math::vec3f CAM_POS_AR_16_9(40.f, 4.f, -1.f);
+const math::vec3f CAM_POS_AR_1_1(31.f, 3.f, -1.f);
+const math::vec3f CAM_POS_AR_9_16(35.f, 4.f, -1.f);
 
 float frand()
 {
@@ -100,11 +87,11 @@ int main(void)
       //application setup
 
     PerspectiveCamera::Pointer camera = PerspectiveCamera::create();
-    // cylinder-orbit camera: the camera rides a vertical cylinder around the central axis (x=z=0) and
-    // always looks at that axis. Drag spirals it around+up/down the cylinder; pinch/wheel changes radius.
-    float cam_angle  = 0.0f;   // azimuth around the axis (radians)
-    float cam_height = 1.0f;   // height along the axis (world Y) - around the fall zone
-    float cam_radius = 2.5f;   // distance from the axis (zoom), kept inside the two trees
+    math::vec3f camera_position;
+    math::anglef camera_pitch(math::degree(4.f));
+    math::anglef camera_yaw(math::degree(-90.f));
+    math::anglef camera_roll(math::degree(0.f));
+    math::vec3f camera_move_direction(0.f);
     SoundPlayer sound_player;
 
     Application app;
@@ -121,11 +108,15 @@ int main(void)
 
     if (window_ratio > 1)
     {
+      camera_position = CAM_POS_AR_1_1 + (CAM_POS_AR_16_9 - CAM_POS_AR_1_1) * (window_ratio - 1.f) / (16.f / 9.f - 1.f);
+
       camera->set_fov_x(math::degree(FOV_X_LANDSCAPE));
       camera->set_fov_y(math::degree(FOV_X_LANDSCAPE / window_ratio));
     }
     else
     {
+      camera_position = CAM_POS_AR_1_1 + (CAM_POS_AR_9_16 - CAM_POS_AR_1_1) * (window_ratio - 1.f) / (9.f / 16.f - 1.f);
+
       camera->set_fov_x(math::degree(FOV_Y_PORTRAIT * window_ratio));
       camera->set_fov_y(math::degree(FOV_Y_PORTRAIT));
     }
@@ -137,11 +128,44 @@ int main(void)
     window.set_keyboard_handler([&](Key key, bool pressed) {
       sound_player.play_music();
 
-      if (key == Key_Escape)
+      math::vec3f direction_change;
+
+      bool camera_position_changed = false;
+
+      switch (key)
       {
-        engine_log_info("Escape pressed. Exiting...");
-        window.close();
+        case Key_Up:
+        case Key_W:
+          direction_change = math::vec3f(0.f,0.f,pressed ? 1.f : -1.f);
+          camera_position_changed = true;
+          break;
+        case Key_Down:
+        case Key_S:
+          direction_change = math::vec3f(0.f,0.f,pressed ? -1.f : 1.f);
+          camera_position_changed = true;
+          break;
+        case Key_Right:
+        case Key_D:
+          direction_change = math::vec3f(pressed ? -1.f : 1.f,0.f,0.f);
+          camera_position_changed = true;
+          break;
+        case Key_Left:
+        case Key_A:
+          direction_change = math::vec3f(pressed ? 1.f : -1.f,0.f,0.f);
+          camera_position_changed = true;
+          break;
+        case Key_Escape:
+          engine_log_info("Escape pressed. Exiting...");
+          window.close();
+          break;
+        default:
+          break;
       }
+
+      camera_move_direction += direction_change;
+
+      engine_log_info("CAM POS %f %f %f", camera_position.x, camera_position.y, camera_position.z);
+      engine_log_info("CAM orientaton %f %f %f", camera_pitch.to_degree(), camera_yaw.to_degree(), camera_roll.to_degree());
     });
 
       //scene setup
@@ -150,14 +174,8 @@ int main(void)
 
     camera->set_z_near(1.f);
     camera->set_z_far(1000.f);
-
-    // place the camera on a cylinder around the axis between the two trees, looking at that axis a bit
-    // lower than the camera (tilt down) so falling droplets are in focus (recomputed every frame)
-    auto apply_cylinder_camera = [&]() {
-      camera->set_position(math::vec3f(CAM_CENTER_X + cam_radius * std::sin(cam_angle), cam_height, CAM_CENTER_Z + cam_radius * std::cos(cam_angle)));
-      camera->world_look_to(math::vec3f(CAM_CENTER_X, cam_height - CAM_LOOK_DOWN, CAM_CENTER_Z), math::vec3f(0.0f, 1.0f, 0.0f));
-    };
-    apply_cylinder_camera();
+    camera->set_position(camera_position);
+    camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
 
     camera->bind_to_parent(*scene_root);
 
@@ -240,8 +258,10 @@ int main(void)
 
     bool left_mouse_button_pressed = false;
     bool right_mouse_button_pressed = false;
-    double last_mouse_x = 0.0;
-    double last_mouse_y = 0.0;
+    double last_mouse_x;
+    double last_mouse_y;
+    float target_offset_x, target_offset_y, target_offset_z;
+    float start_grab_x, start_grab_y, start_grab_z;
 
     int start_play_music = 0;
 
@@ -255,13 +275,50 @@ int main(void)
       double dx = x - last_mouse_x;
       double dy = y - last_mouse_y;
 
-      // drag (mouse or one finger) spirals the camera over the cylinder surface:
-      // horizontal -> orbit around the central axis, vertical -> move up/down the cylinder
-      if (left_mouse_button_pressed || right_mouse_button_pressed)
+      if (right_mouse_button_pressed)
       {
-        cam_angle  += (float)(dx * CAM_ORBIT_SPEED);
-        cam_height -= (float)(dy * CAM_HEIGHT_SPEED); // drag up -> rise
-        cam_height  = std::min(std::max(cam_height, CAM_HEIGHT_MIN), CAM_HEIGHT_MAX);
+        camera_pitch += math::degree(dy * CAMERA_ROTATE_SPEED);
+        camera_yaw -= math::degree(dx * CAMERA_ROTATE_SPEED);
+
+        camera->set_orientation(math::to_quat(camera_pitch, camera_yaw, camera_roll));
+      }
+#if 0
+      if (left_mouse_button_pressed)
+      {
+        //compute inverse view projection matrix
+        math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
+        float normalized_x = (x / window.width()) * 2.f - 1.f,
+              normalized_y = 1.f - (y / window.height()) * 2.f;
+
+        math::vec4f ray_start = inverse_view_projection * math::vec4f(normalized_x, normalized_y, -1.f, 1.f);
+
+        ray_start /= ray_start.w;
+
+        target_offset_x = ray_start.x - start_grab_x;
+        target_offset_y = ray_start.y - start_grab_y;
+        target_offset_z = ray_start.z - start_grab_z;
+      }
+#endif
+
+      if (left_mouse_button_pressed)
+      {
+        //compute inverse view projection matrix
+        math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
+        //compute world-space offset for last drag
+        float normalized_dx = dx / window.width(),
+              normalized_dy = -dy / window.height();
+
+        math::vec4f center_world = inverse_view_projection * math::vec4f(0, 0, -1.f, 1.f),
+                    offset_world = inverse_view_projection * math::vec4f(normalized_dx, normalized_dy, -1.f, 1.f);
+
+        center_world /= center_world.w;
+        offset_world /= offset_world.w;
+
+        target_offset_x += (offset_world.x - center_world.x) * DRAG_OFFSET_MULTIPLIER;
+        target_offset_y += (offset_world.y - center_world.y) * DRAG_OFFSET_MULTIPLIER;
+        target_offset_z += (offset_world.z - center_world.z) * DRAG_OFFSET_MULTIPLIER;
       }
 
       last_mouse_x = x;
@@ -275,24 +332,49 @@ int main(void)
       start_play_music = 10;
 
       if (button == MouseButton_Left)
-        left_mouse_button_pressed = pressed;  // drives the cylinder orbit in the move handler
+      {
+        left_mouse_button_pressed = pressed;
+
+        if (pressed)
+        {
+          //compute inverse view projection matrix
+          math::mat4f inverse_view_projection = math::inverse(camera->projection_matrix() * math::inverse(camera->world_tm() * scene_viewport.subview_tm()));
+
+          //transorm last_mouse_x, last_mouse_y to world space
+          float normalized_x = (last_mouse_x / window.width()) * 2.f - 1.f,
+                normalized_y = 1.f - (last_mouse_y / window.height()) * 2.f;
+
+          math::vec4f ray_start = inverse_view_projection * math::vec4f(normalized_x, normalized_y, -1.f, 1.f),
+                      ray_end = inverse_view_projection * math::vec4f(normalized_x, normalized_y, 1.f, 1.f);
+
+          ray_start /= ray_start.w;
+          ray_end /= ray_end.w;
+
+          world.inputGrab(ray_start.x, ray_start.y, ray_start.z, ray_end.x, ray_end.y, ray_end.z);
+
+          target_offset_x = 0.f;
+          target_offset_y = 0.f;
+          target_offset_z = 0.f;
+
+          start_grab_x = ray_start.x;
+          start_grab_y = ray_start.y;
+          start_grab_z = ray_start.z;
+
+/*          math::vec4f camera_forward = camera->world_tm() * math::vec4f(0, 0, 1, 1);
+
+          engine_log_info("cursor pos = (%.2f, %.2f)", normalized_x, normalized_y);
+          engine_log_info("camera pos = (%.2f, %.2f, %.2f)", camera->position().x, camera->position().y, camera->position().z);
+          engine_log_info("camera forward = (%.2f, %.2f, %.2f)", camera_forward.x, camera_forward.y, camera_forward.z);
+          engine_log_info("ray_start=(%.2f, %.2f, %.2f, %.2f) ray_end=(%.2f, %.2f, %.2f, %.2f)",
+                          ray_start.x, ray_start.y, ray_start.z, ray_start.w,
+                          ray_end.x, ray_end.y, ray_end.z, ray_end.w);*/
+        }
+        else
+          world.inputRelease();
+      }
 
       if (button == MouseButton_Right)
         right_mouse_button_pressed = pressed;
-    });
-
-    auto zoom = [&](float radius_delta) {
-      cam_radius = std::min(std::max(cam_radius + radius_delta, CAM_RADIUS_MIN), CAM_RADIUS_MAX);
-    };
-
-    // desktop: mouse wheel zooms (wheel up = closer)
-    window.set_wheel_handler([&](double delta) {
-      zoom(-(float)delta * CAM_WHEEL_ZOOM);
-    });
-
-    // mobile: two-finger pinch zooms (fingers spread = closer)
-    window.set_pinch_handler([&](double distance_delta) {
-      zoom(-(float)distance_delta * CAM_PINCH_ZOOM);
     });
 
       //main loop
@@ -317,6 +399,7 @@ int main(void)
       double dt = new_time - last_time;
       last_time = new_time;
 
+      world.inputDrag(target_offset_x, target_offset_y, target_offset_z);
       world.update((float) dt);
 
       sound_player.update();
@@ -333,9 +416,12 @@ int main(void)
         passes_initialized = true;
       }
 
-        //place the camera on the cylinder from the current angle/height/radius (updated by drag + zoom)
+      if (!math::equal(camera_move_direction, math::vec3f(0.f), 0.1f))
+      {
+        camera_position += math::to_quat(camera_pitch, camera_yaw, camera_roll) * camera_move_direction * CAMERA_MOVE_SPEED * dt;
 
-      apply_cylinder_camera();
+        camera->set_position(camera_position);
+      }
 
         //animate objects
 

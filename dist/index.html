@@ -21,10 +21,8 @@
         canvas {
             height:100%;
             width:100%;
-            display:block;
-        }
-        p {
-            margin: 10pt;
+            display: block;
+            touch-action: none; /* let the C++ handle touch drags; don't scroll/zoom the page */
         }
 
         /* live droplet tuning panel */
@@ -52,6 +50,11 @@
         }
         #tuning button:active { background: rgba(95,208,138,0.34); }
         #tuning .hint { opacity:.55; font-size:10px; margin-top:6px; }
+
+        /* mobile / touch devices: hide the dev settings menu and use the compile defaults */
+        @media (hover: none) and (pointer: coarse) {
+            #tuning { display: none !important; }
+        }
     </style>
 </head>
 
@@ -83,13 +86,14 @@
         (function () {
             // key must match the names read in world.cpp refresh_live_tuning()
             var PARAMS = [
-                { key: 'metaballRadius', label: 'metaball radius', min: 0.02, max: 0.20, step: 0.002, def: 0.052, cpp: 'DROPLET_RAYMARCH_PARTICLE_RADIUS' },
-                { key: 'influence',      label: 'influence (merge)', min: 0.02, max: 0.30, step: 0.005, def: 0.13, cpp: 'DROPLET_INFLUENCE_RADIUS' },
+                { key: 'metaballRadius', label: 'metaball radius', min: 0.02, max: 0.20, step: 0.002, def: 0.050, cpp: 'DROPLET_RAYMARCH_PARTICLE_RADIUS' },
+                { key: 'influence',      label: 'influence (merge)', min: 0.02, max: 0.30, step: 0.005, def: 0.075, cpp: 'DROPLET_INFLUENCE_RADIUS' },
                 { key: 'iso',            label: 'iso threshold', min: -0.06, max: 0.10, step: 0.005, def: -0.04, cpp: 'DROPLET_ISO_THRESHOLD' },
-                { key: 'force',          label: 'cohesion force', min: 0.08, max: 0.30, step: 0.005, def: 0.13, cpp: 'DROPLET_PARTICLE_FORCE' },
-                { key: 'damping',        label: 'damping', min: 0.0, max: 0.04, step: 0.002, def: 0.002, cpp: 'DROPLET_PARTICLE_DAMPING' },
-                { key: 'particlesPerDroplet', label: 'particles / droplet', min: 20, max: 400, step: 5, def: 30, intVal: true, cpp: 'particles/droplet' },
-                { key: 'physicalRadius', label: 'physical radius', min: 0.02, max: 0.15, step: 0.005, def: 0.025, cpp: 'DROPLET_PARTICLE_RADIUS' }
+                { key: 'force',          label: 'surface tension', min: 0.0, max: 6.0, step: 0.05, def: 1.0, cpp: 'DROPLET_SURFACE_TENSION' },
+                { key: 'cohesionRadius', label: 'cohesion radius', min: 0.04, max: 0.30, step: 0.005, def: 0.11, cpp: 'DROPLET_COHESION_RADIUS' },
+                { key: 'damping',        label: 'viscosity', min: 0.0, max: 6.0, step: 0.05, def: 1.0, cpp: 'DROPLET_VISCOSITY' },
+                { key: 'particlesPerDroplet', label: 'particles / droplet', min: 13, max: 400, step: 1, def: 20, intVal: true, cpp: 'particles/droplet' },
+                { key: 'physicalRadius', label: 'physical radius', min: 0.015, max: 0.15, step: 0.002, def: 0.027, cpp: 'DROPLET_PARTICLE_RADIUS' }
             ];
 
             window.DROPLET = window.DROPLET || {};
@@ -97,28 +101,51 @@
 
             function fmt(v) { return (Math.round(v * 1000) / 1000).toString(); } // drops trailing zeros (ints show clean)
 
-            PARAMS.forEach(function (p) {
-                window.DROPLET[p.key] = p.def;
-                var row = document.createElement('div'); row.className = 'row';
-                row.innerHTML =
-                    '<div class="lab"><span>' + p.label + '</span><span class="val" id="v-' + p.key + '">' + fmt(p.def) + '</span></div>' +
-                    '<input type="range" id="s-' + p.key + '" min="' + p.min + '" max="' + p.max + '" step="' + p.step + '" value="' + p.def + '">';
-                body.appendChild(row);
-                var slider = row.querySelector('#s-' + p.key);
-                var out = row.querySelector('#v-' + p.key);
-                slider.addEventListener('input', function () {
-                    var v = parseFloat(slider.value);
-                    window.DROPLET[p.key] = v;
-                    out.textContent = fmt(v);
+            // wind / branch-skeleton knobs (read every frame by world.cpp via window.WIND)
+            var WIND_PARAMS = [
+                { key: 'accel',     label: 'wind strength', min: 0, max: 50, step: 0.5, def: 10.0, cpp: 'WIND_ACCEL' },
+                { key: 'stiffness', label: 'branch stiffness', min: 100, max: 8000, step: 50, def: 1000, cpp: 'JOINT_STIFFNESS_BASE' },
+                { key: 'damping',   label: 'branch damping', min: 0.0, max: 1.0, step: 0.02, def: 0.7, cpp: 'JOINT_DAMPING' }
+            ];
+            window.WIND = window.WIND || {};
+
+            function buildGroup(store, params, headingText) {
+                if (headingText) {
+                    var h = document.createElement('div');
+                    h.style.cssText = 'margin:9px 0 2px;opacity:.7;border-top:1px solid rgba(120,200,150,.25);padding-top:7px;';
+                    h.textContent = headingText;
+                    body.appendChild(h);
+                }
+                params.forEach(function (p) {
+                    store[p.key] = p.def;
+                    var row = document.createElement('div'); row.className = 'row';
+                    row.innerHTML =
+                        '<div class="lab"><span>' + p.label + '</span><span class="val" id="v-' + p.key + '">' + fmt(p.def) + '</span></div>' +
+                        '<input type="range" id="s-' + p.key + '" min="' + p.min + '" max="' + p.max + '" step="' + p.step + '" value="' + p.def + '">';
+                    body.appendChild(row);
+                    var slider = row.querySelector('#s-' + p.key);
+                    var out = row.querySelector('#v-' + p.key);
+                    slider.addEventListener('input', function () {
+                        var v = parseFloat(slider.value);
+                        store[p.key] = v;
+                        out.textContent = fmt(v);
+                    });
                 });
-            });
+            }
+
+            buildGroup(window.DROPLET, PARAMS, null);
+            buildGroup(window.WIND, WIND_PARAMS, '🌬 wind / branches');
 
             document.getElementById('tuning-reset').addEventListener('click', function () {
-                PARAMS.forEach(function (p) {
-                    window.DROPLET[p.key] = p.def;
-                    document.getElementById('s-' + p.key).value = p.def;
-                    document.getElementById('v-' + p.key).textContent = fmt(p.def);
-                });
+                function resetGroup(store, params) {
+                    params.forEach(function (p) {
+                        store[p.key] = p.def;
+                        document.getElementById('s-' + p.key).value = p.def;
+                        document.getElementById('v-' + p.key).textContent = fmt(p.def);
+                    });
+                }
+                resetGroup(window.DROPLET, PARAMS);
+                resetGroup(window.WIND, WIND_PARAMS);
             });
 
             document.getElementById('tuning-copy').addEventListener('click', function () {
@@ -140,7 +167,6 @@
                 panel.querySelector('.caret').textContent = panel.classList.contains('collapsed') ? '▸' : '▾';
             });
         })();
-
     </script>
 
     <!-- Call the javascript glue code (index.js) as generated by Emscripten -->
