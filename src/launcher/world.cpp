@@ -117,6 +117,11 @@ const float  LEAF_GROW_START       = 0.05f; // leaf scale at spawn (then ramps t
 const float  LEAF_GROW_MIN_SECONDS = 1.5f;  // a leaf unfurls over this..max seconds (random per leaf)
 const float  LEAF_GROW_MAX_SECONDS = 4.5f;
 const float  DROPLET_SPAWN_ABOVE_LEAF = 0.4f; // spawn the droplet a little above the chosen top leaf
+// branch-skeleton spring joints (tune live): stiffness scales with branch thickness
+const float  JOINT_STIFFNESS_BASE = 3000.0f; // torque per radian, * (radius + 0.02)
+const float  JOINT_DAMPING        = 0.9f;
+const float  JOINT_ANGLE_LIMIT    = 0.6f;    // max bend per joint (radians)
+const float  WIND_ACCEL           = 2.2f;    // wind acceleration on the branch bones (tune live)
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -264,6 +269,9 @@ struct Leaf
   float grow_age = 0.0f;       // seconds since the leaf sprouted
   float grow_duration = 0.0f;  // 0 = not a growing generated leaf (e.g. ground), >0 = ramp length
   std::vector<std::shared_ptr<btCollisionShape>> hull_children; // keep compound children alive
+  bool on_skeleton = false;             // pinned to a branch bone (follows the swaying branch)
+  btRigidBody* skeleton_bone = nullptr; // the branch bone this leaf rides
+  btTransform  rest_local;              // leaf's rest pose in that bone's local frame (spring target tracks it)
 
   Leaf(const clock_t& last_frame_time, RigidBodyWorldCommonData& world_data)
     : rigid_body_info(new RigidBodyInfo(COLLISION_GROUP_LEAF, last_frame_time, world_data))
@@ -277,6 +285,7 @@ struct BoneBody
   std::shared_ptr<btCollisionShape>     shape;
   std::shared_ptr<btDefaultMotionState> motion;
   std::shared_ptr<btRigidBody>          body;
+  std::shared_ptr<btTypedConstraint>    joint; // 6-DOF spring to the parent bone (null for the root)
   int parent = -1;
   std::vector<media::geometry::Vertex>           verts;   // bone-local, scaled to world units
   std::vector<media::geometry::Mesh::index_type> indices;
@@ -606,6 +615,7 @@ struct World::Impl: RigidBodyWorldCommonData
   Material flower_material; // procedural flowers/branches (vertex-colour lit; tag "flower")
   Material leaf_render_material; // generated leaves, textured with the real leaf_color.png (tag ""/forward_lighting)
   std::vector<std::shared_ptr<Plant>> plants;
+  float wind_time = 0.0f; // accumulates dt; drives the wind gusts on the branch skeleton
   btRigidBody* grabbed_object;
   btVector3 grabbed_object_pos_world;
   btVector3 grabbed_object_pos_local;
@@ -1440,13 +1450,94 @@ struct World::Impl: RigidBodyWorldCommonData
       t.setOrigin(btVector3(origin_world.x, origin_world.y, origin_world.z));
       bb.motion = std::make_shared<btDefaultMotionState>(t);
 
-      btRigidBody::btRigidBodyConstructionInfo ci(0.0f, bb.motion.get(), hull, btVector3(0, 0, 0));
+      bool is_root = (bb.parent < 0);
+
+        //root = fixed anchor (mass 0). other bones = dynamic, jointed to the parent by a spring.
+      float mass = 0.0f;
+      btVector3 inertia(0, 0, 0);
+      if (!is_root)
+      {
+        float lw = math::length(src.rest_tip - src.rest_base) * s;
+        float rw = src.radius * s;
+        mass = 40.0f * rw * rw * lw;
+        mass = mass < 0.05f ? 0.05f : (mass > 8.0f ? 8.0f : mass);
+        hull->calculateLocalInertia(mass, inertia);
+      }
+
+      btRigidBody::btRigidBodyConstructionInfo ci(mass, bb.motion.get(), hull, inertia);
       bb.body = std::make_shared<btRigidBody>(ci);
-      bb.body->setCollisionFlags(bb.body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
       bb.body->setActivationState(DISABLE_DEACTIVATION);
-      dynamics_world->addRigidBody(bb.body.get(), COLLISION_GROUP_LEAF, 0); // mask 0: drives the mesh only, collides with nothing (yet)
+      if (!is_root)
+        bb.body->setGravity(btVector3(0, 0, 0)); // springs hold the rest pose; wind/drag move it
+      dynamics_world->addRigidBody(bb.body.get(), COLLISION_GROUP_LEAF, 0); // mask 0: skeleton-internal, collides with nothing
 
       plant->bones.push_back(bb);
+
+        //spring joint to the parent at this bone's base (lock translation, allow limited bending)
+      if (!is_root)
+      {
+        BoneBody& self = plant->bones.back();
+        btRigidBody* parent_body = plant->bones[self.parent].body.get();
+        math::vec3f parent_origin = base + bones[self.parent].rest_base * s;
+
+        btTransform frameA; frameA.setIdentity();
+        frameA.setOrigin(btVector3(origin_world.x - parent_origin.x,
+                                   origin_world.y - parent_origin.y,
+                                   origin_world.z - parent_origin.z));
+        btTransform frameB; frameB.setIdentity();
+
+        btGeneric6DofSpringConstraint* spring =
+          new btGeneric6DofSpringConstraint(*parent_body, *self.body.get(), frameA, frameB, true);
+        spring->setLinearLowerLimit(btVector3(0, 0, 0));
+        spring->setLinearUpperLimit(btVector3(0, 0, 0));   // no stretch
+        float lim = JOINT_ANGLE_LIMIT;
+        spring->setAngularLowerLimit(btVector3(-lim, -lim, -lim));
+        spring->setAngularUpperLimit(btVector3( lim,  lim,  lim));
+        float rw = src.radius * s;
+        float k  = JOINT_STIFFNESS_BASE * (rw + 0.02f);    // thicker branches -> stiffer
+        for (int a = 3; a < 6; a++)
+        {
+          spring->enableSpring(a, true);
+          spring->setStiffness(a, k);
+          spring->setDamping(a, JOINT_DAMPING);
+          spring->setEquilibriumPoint(a, 0.0f);
+        }
+        self.joint = std::shared_ptr<btTypedConstraint>(spring);
+        dynamics_world->addConstraint(spring, true);
+      }
+    }
+
+      //reattach each leaf to its NEAREST branch bone (was pinned to a static anchor), so leaves follow
+      //the swaying branches and dragging a leaf pulls its branch -> propagates down to the root.
+    for (Leaf& leaf : leaves)
+    {
+      if (leaf.on_skeleton)
+        continue;
+      btVector3 lp = leaf.phys_body->body->getWorldTransform().getOrigin();
+      int best = -1;
+      float bestd = 1e30f;
+      for (size_t b = 0; b < bones.size(); b++)
+      {
+        math::vec3f mid = base + (bones[b].rest_base + bones[b].rest_tip) * 0.5f * s;
+        float d = (lp - btVector3(mid.x, mid.y, mid.z)).length2();
+        if (d < bestd) { bestd = d; best = (int) b; }
+      }
+      if (best < 0)
+        continue;
+
+      btRigidBody* bone_body = plant->bones[best].body.get();
+      if (leaf.constraint)       dynamics_world->removeConstraint(leaf.constraint.get());
+      if (leaf.static_bind_body) dynamics_world->removeRigidBody(leaf.static_bind_body.get());
+
+      btVector3 bone_origin = bone_body->getWorldTransform().getOrigin();
+      btVector3 pivot_in_bone = lp - bone_origin; // bone rest rotation is identity
+      leaf.constraint = std::make_shared<btPoint2PointConstraint>(*leaf.phys_body->body, *bone_body,
+        btVector3(0, 0, 0), pivot_in_bone);
+      dynamics_world->addConstraint(leaf.constraint.get(), true);
+
+      leaf.on_skeleton   = true;
+      leaf.skeleton_bone = bone_body;
+      leaf.rest_local    = bone_body->getWorldTransform().inverse() * leaf.target_transform; // pose relative to the bone
     }
 
     plant->skeletonized = true;
@@ -1497,9 +1588,32 @@ struct World::Impl: RigidBodyWorldCommonData
     plant->mesh->set_mesh(mesh);
   }
 
+  // Push the branch skeleton with time-varying wind so the tree sways (gusts = sum of sines; a fixed
+  // acceleration per bone -> the stiffness gradient makes twigs sway more than the trunk).
+  void apply_wind(const std::shared_ptr<Plant>& plant)
+  {
+    float t = wind_time;
+    float gust = 0.55f + 0.45f * std::sin(t * 0.6f) + 0.25f * std::sin(t * 1.7f + 1.3f);
+    math::vec3f dir = math::normalize(math::vec3f(1.0f, 0.0f, 0.35f));
+
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      BoneBody& bb = plant->bones[b];
+      if (bb.parent < 0 || bb.body->getInvMass() <= 0.0f)
+        continue;
+      float m  = 1.0f / bb.body->getInvMass();
+      float ph = 0.7f + 0.3f * std::sin(t * 1.1f + (float) b * 0.7f);
+      math::vec3f f = dir * (m * WIND_ACCEL * gust * ph);
+      bb.body->applyCentralForce(btVector3(f.x, f.y, f.z));
+      bb.body->activate(true);
+    }
+  }
+
   // Advance every still-growing plant by dt; re-mesh when growth moved enough (called each frame).
   void update_plants(float dt)
   {
+    wind_time += dt;
+
     for (auto& plant : plants)
     {
       if (!plant->skeletonized)
@@ -1513,6 +1627,7 @@ struct World::Impl: RigidBodyWorldCommonData
       }
       else
       {
+        apply_wind(plant);
         rebuild_skeleton_mesh(plant); // branch mesh follows the physics skeleton
       }
 
@@ -1697,6 +1812,11 @@ struct World::Impl: RigidBodyWorldCommonData
 
     for (Leaf& leaf : leaves)
     {
+      if (leaf.on_skeleton && leaf.skeleton_bone)
+        // the leaf's rest pose tracks its (swaying) branch bone, so the spring restores it relative to
+        // the branch rather than to a fixed world pose; droplet/wind nudges still spring back.
+        leaf.target_transform = leaf.skeleton_bone->getWorldTransform() * leaf.rest_local;
+
       btRigidBody* body = leaf.phys_body->body.get();
       float inv_mass = body->getInvMass();
       float mass = inv_mass == 0.0f ? 0.0f : 1.0f / inv_mass;
