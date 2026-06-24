@@ -100,28 +100,51 @@
 
             function fmt(v) { return (Math.round(v * 1000) / 1000).toString(); } // drops trailing zeros (ints show clean)
 
-            PARAMS.forEach(function (p) {
-                window.DROPLET[p.key] = p.def;
-                var row = document.createElement('div'); row.className = 'row';
-                row.innerHTML =
-                    '<div class="lab"><span>' + p.label + '</span><span class="val" id="v-' + p.key + '">' + fmt(p.def) + '</span></div>' +
-                    '<input type="range" id="s-' + p.key + '" min="' + p.min + '" max="' + p.max + '" step="' + p.step + '" value="' + p.def + '">';
-                body.appendChild(row);
-                var slider = row.querySelector('#s-' + p.key);
-                var out = row.querySelector('#v-' + p.key);
-                slider.addEventListener('input', function () {
-                    var v = parseFloat(slider.value);
-                    window.DROPLET[p.key] = v;
-                    out.textContent = fmt(v);
+            // wind / branch-skeleton knobs (read every frame by world.cpp via window.WIND)
+            var WIND_PARAMS = [
+                { key: 'accel',     label: 'wind strength', min: 0, max: 40, step: 0.5, def: 9.0, cpp: 'WIND_ACCEL' },
+                { key: 'stiffness', label: 'branch stiffness', min: 100, max: 6000, step: 50, def: 1600, cpp: 'JOINT_STIFFNESS_BASE' },
+                { key: 'damping',   label: 'branch damping', min: 0.0, max: 1.0, step: 0.02, def: 0.7, cpp: 'JOINT_DAMPING' }
+            ];
+            window.WIND = window.WIND || {};
+
+            function buildGroup(store, params, headingText) {
+                if (headingText) {
+                    var h = document.createElement('div');
+                    h.style.cssText = 'margin:9px 0 2px;opacity:.7;border-top:1px solid rgba(120,200,150,.25);padding-top:7px;';
+                    h.textContent = headingText;
+                    body.appendChild(h);
+                }
+                params.forEach(function (p) {
+                    store[p.key] = p.def;
+                    var row = document.createElement('div'); row.className = 'row';
+                    row.innerHTML =
+                        '<div class="lab"><span>' + p.label + '</span><span class="val" id="v-' + p.key + '">' + fmt(p.def) + '</span></div>' +
+                        '<input type="range" id="s-' + p.key + '" min="' + p.min + '" max="' + p.max + '" step="' + p.step + '" value="' + p.def + '">';
+                    body.appendChild(row);
+                    var slider = row.querySelector('#s-' + p.key);
+                    var out = row.querySelector('#v-' + p.key);
+                    slider.addEventListener('input', function () {
+                        var v = parseFloat(slider.value);
+                        store[p.key] = v;
+                        out.textContent = fmt(v);
+                    });
                 });
-            });
+            }
+
+            buildGroup(window.DROPLET, PARAMS, null);
+            buildGroup(window.WIND, WIND_PARAMS, '🌬 wind / branches');
 
             document.getElementById('tuning-reset').addEventListener('click', function () {
-                PARAMS.forEach(function (p) {
-                    window.DROPLET[p.key] = p.def;
-                    document.getElementById('s-' + p.key).value = p.def;
-                    document.getElementById('v-' + p.key).textContent = fmt(p.def);
-                });
+                function resetGroup(store, params) {
+                    params.forEach(function (p) {
+                        store[p.key] = p.def;
+                        document.getElementById('s-' + p.key).value = p.def;
+                        document.getElementById('v-' + p.key).textContent = fmt(p.def);
+                    });
+                }
+                resetGroup(window.DROPLET, PARAMS);
+                resetGroup(window.WIND, WIND_PARAMS);
             });
 
             document.getElementById('tuning-copy').addEventListener('click', function () {

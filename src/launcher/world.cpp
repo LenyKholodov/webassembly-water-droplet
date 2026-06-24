@@ -118,10 +118,10 @@ const float  LEAF_GROW_MIN_SECONDS = 1.5f;  // a leaf unfurls over this..max sec
 const float  LEAF_GROW_MAX_SECONDS = 4.5f;
 const float  DROPLET_SPAWN_ABOVE_LEAF = 0.4f; // spawn the droplet a little above the chosen top leaf
 // branch-skeleton spring joints (tune live): stiffness scales with branch thickness
-const float  JOINT_STIFFNESS_BASE = 3000.0f; // torque per radian, * (radius + 0.02)
-const float  JOINT_DAMPING        = 0.9f;
-const float  JOINT_ANGLE_LIMIT    = 0.6f;    // max bend per joint (radians)
-const float  WIND_ACCEL           = 2.2f;    // wind acceleration on the branch bones (tune live)
+const float  JOINT_STIFFNESS_BASE = 1600.0f; // torque per radian, * (radius + 0.02); live via window.WIND.stiffness
+const float  JOINT_DAMPING        = 0.7f;    // 0..1 spring damping; live via window.WIND.damping
+const float  JOINT_ANGLE_LIMIT    = 0.95f;   // max bend per joint (radians)
+const float  WIND_ACCEL           = 9.0f;    // wind acceleration on the branch bones; live via window.WIND.accel
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -286,7 +286,8 @@ struct BoneBody
   std::shared_ptr<btDefaultMotionState> motion;
   std::shared_ptr<btRigidBody>          body;
   std::shared_ptr<btTypedConstraint>    joint; // 6-DOF spring to the parent bone (null for the root)
-  int parent = -1;
+  int   parent = -1;
+  float radius_world = 0.1f; // branch radius in world units (drives per-bone joint stiffness)
   std::vector<media::geometry::Vertex>           verts;   // bone-local, scaled to world units
   std::vector<media::geometry::Mesh::index_type> indices;
 };
@@ -326,6 +327,10 @@ struct LiveTuning
   float damping         = DROPLET_PARTICLE_DAMPING;
   int   particles_per_droplet = 20; // physics particles spawned per droplet (~1.5x fewer)
   float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
+  // branch-skeleton knobs (window.WIND.* sliders)
+  float wind_accel      = WIND_ACCEL;
+  float joint_stiffness = JOINT_STIFFNESS_BASE;
+  float joint_damping   = JOINT_DAMPING;
 };
 
 struct Droplet
@@ -1464,6 +1469,8 @@ struct World::Impl: RigidBodyWorldCommonData
         hull->calculateLocalInertia(mass, inertia);
       }
 
+      bb.radius_world = src.radius * s;
+
       btRigidBody::btRigidBodyConstructionInfo ci(mass, bb.motion.get(), hull, inertia);
       bb.body = std::make_shared<btRigidBody>(ci);
       bb.body->setActivationState(DISABLE_DEACTIVATION);
@@ -1493,13 +1500,12 @@ struct World::Impl: RigidBodyWorldCommonData
         float lim = JOINT_ANGLE_LIMIT;
         spring->setAngularLowerLimit(btVector3(-lim, -lim, -lim));
         spring->setAngularUpperLimit(btVector3( lim,  lim,  lim));
-        float rw = src.radius * s;
-        float k  = JOINT_STIFFNESS_BASE * (rw + 0.02f);    // thicker branches -> stiffer
+        float k = live.joint_stiffness * (bb.radius_world + 0.02f); // thicker branches -> stiffer
         for (int a = 3; a < 6; a++)
         {
           spring->enableSpring(a, true);
           spring->setStiffness(a, k);
-          spring->setDamping(a, JOINT_DAMPING);
+          spring->setDamping(a, live.joint_damping);
           spring->setEquilibriumPoint(a, 0.0f);
         }
         self.joint = std::shared_ptr<btTypedConstraint>(spring);
@@ -1593,7 +1599,9 @@ struct World::Impl: RigidBodyWorldCommonData
   void apply_wind(const std::shared_ptr<Plant>& plant)
   {
     float t = wind_time;
-    float gust = 0.55f + 0.45f * std::sin(t * 0.6f) + 0.25f * std::sin(t * 1.7f + 1.3f);
+    // steady breeze + slow swell + faster gust -> always blowing, never fully stalls
+    float gust = 0.9f + 0.5f * std::sin(t * 0.6f) + 0.3f * std::sin(t * 1.7f + 1.3f);
+    if (gust < 0.15f) gust = 0.15f;
     math::vec3f dir = math::normalize(math::vec3f(1.0f, 0.0f, 0.35f));
 
     for (size_t b = 0; b < plant->bones.size(); b++)
@@ -1603,9 +1611,28 @@ struct World::Impl: RigidBodyWorldCommonData
         continue;
       float m  = 1.0f / bb.body->getInvMass();
       float ph = 0.7f + 0.3f * std::sin(t * 1.1f + (float) b * 0.7f);
-      math::vec3f f = dir * (m * WIND_ACCEL * gust * ph);
+      math::vec3f f = dir * (m * live.wind_accel * gust * ph);
       bb.body->applyCentralForce(btVector3(f.x, f.y, f.z));
       bb.body->activate(true);
+    }
+  }
+
+  // Push the live stiffness/damping sliders into the existing spring joints (so the branches can be
+  // tuned from stiff to springy without a rebuild). Cheap: ~one downcast + 3 axes per branch.
+  void update_joint_params(const std::shared_ptr<Plant>& plant)
+  {
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      BoneBody& bb = plant->bones[b];
+      btGeneric6DofSpringConstraint* spring = dynamic_cast<btGeneric6DofSpringConstraint*>(bb.joint.get());
+      if (!spring)
+        continue;
+      float k = live.joint_stiffness * (bb.radius_world + 0.02f);
+      for (int a = 3; a < 6; a++)
+      {
+        spring->setStiffness(a, k);
+        spring->setDamping(a, live.joint_damping);
+      }
     }
   }
 
@@ -1627,6 +1654,7 @@ struct World::Impl: RigidBodyWorldCommonData
       }
       else
       {
+        update_joint_params(plant); // live stiffness/damping sliders
         apply_wind(plant);
         rebuild_skeleton_mesh(plant); // branch mesh follows the physics skeleton
       }
@@ -1717,6 +1745,9 @@ struct World::Impl: RigidBodyWorldCommonData
     live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
     live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 20);
     live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
+    live.wind_accel      = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.accel      != null) ? window.WIND.accel      : $0; }, (double) WIND_ACCEL);
+    live.joint_stiffness = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.stiffness  != null) ? window.WIND.stiffness  : $0; }, (double) JOINT_STIFFNESS_BASE);
+    live.joint_damping   = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.damping    != null) ? window.WIND.damping    : $0; }, (double) JOINT_DAMPING);
 #endif
   }
 
