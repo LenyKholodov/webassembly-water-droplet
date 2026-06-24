@@ -300,7 +300,7 @@ struct LiveTuning
   float iso             = DROPLET_ISO_THRESHOLD;
   float force           = DROPLET_PARTICLE_FORCE;
   float damping         = DROPLET_PARTICLE_DAMPING;
-  int   particles_per_droplet = 30; // physics particles spawned per droplet (tuned)
+  int   particles_per_droplet = 20; // physics particles spawned per droplet (~1.5x fewer)
   float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
 };
 
@@ -1228,7 +1228,7 @@ struct World::Impl: RigidBodyWorldCommonData
       {
         const launcher::LeafSlot& slot = pl->slots[i];
         math::vec3f wpos = pl->base_position + slot.pos * pl->scale;
-        spawn_leaf(wpos, leaf_orientation(slot.dir), slot.size * 2.0f, slot.seed);
+        spawn_leaf(wpos, leaf_orientation(slot.dir), slot.size * 3.0f, slot.seed);
         pl->slot_spawned[i] = 1;
       }
       update_leaf_growth(100.0f); // grow the leaves in via the real path
@@ -1411,7 +1411,7 @@ struct World::Impl: RigidBodyWorldCommonData
         // slot.pos is local (scaled into the world by plant->scale); slot.size is already a world
         // length. 2x bigger than the previous leaves, per request.
         math::vec3f wpos = plant->base_position + slot.pos * plant->scale;
-        float world_len  = slot.size * 2.0f;
+        float world_len  = slot.size * 3.0f;
 
         spawn_leaf(wpos, leaf_orientation(slot.dir), world_len, slot.seed);
         plant->slot_spawned[i] = 1;
@@ -1477,7 +1477,7 @@ struct World::Impl: RigidBodyWorldCommonData
     live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
     live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
     live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
-    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 30);
+    live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 20);
     live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
 #endif
   }

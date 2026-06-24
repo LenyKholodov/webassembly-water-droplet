@@ -238,8 +238,8 @@ LeafGeom leaf_geom(uint32_t seed, float length)
   float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));
   g.petL         = length * lerpf(0.04f, 0.09f, hashf(seed + 37u)); // shorter leg
   g.petR         = length * lerpf(0.004f, 0.007f, hashf(seed + 41u)); // thinner leg
-  float cup      = lerpf(0.14f, 0.34f, hashf(seed + 53u));
-  float droop    = lerpf(-0.02f, 0.14f, hashf(seed + 71u)) * length;
+  float cup      = lerpf(0.32f, 0.55f, hashf(seed + 53u));               // deep side cupping
+  float bowl     = lerpf(0.12f, 0.22f, hashf(seed + 71u)) * length;      // lengthwise dip (boat)
   g.N = 10;
 
   g.C.resize(g.N + 1); g.L.resize(g.N + 1); g.R.resize(g.N + 1);
@@ -247,13 +247,15 @@ LeafGeom leaf_geom(uint32_t seed, float length)
   {
     float t    = (float) i / (float) g.N;
     float x    = g.petL + t * length;
-    float ymid = -droop * t * t;                                   // tip droops down
+    // BOAT: midrib dips low in the middle and rises at BOTH ends (U-shape, 0 at base/tip), so water is
+    // retained lengthwise instead of running off the drooping tip.
+    float ymid = -bowl * 4.0f * t * (1.0f - t);
     // clamp sin >= 0 BEFORE pow: at the tip sin(PI) is a tiny negative float and pow(neg, frac) = NaN,
     // which made the leaf tip vertex (and so the centroid + droplet spawn) NaN.
     float sv   = std::sin(PI * std::pow(t, skew));
     if (sv < 0.0f) sv = 0.0f;
     float hw   = halfW * std::pow(sv, tipSharp);
-    float yedge = ymid + cup * hw;                                 // edges curl up (concave/cupped)
+    float yedge = ymid + cup * hw;                                 // edges curl up -> deep cup (concave)
     g.C[i] = math::vec3f(x, ymid,  0.0f);
     g.L[i] = math::vec3f(x, yedge, +hw);
     g.R[i] = math::vec3f(x, yedge, -hw);
@@ -370,7 +372,7 @@ void generate_leaf_collision(uint32_t seed, float length, std::vector<std::vecto
   // midrib seam, where it collects (and runs toward the drooping tip). Split along the length into S
   // blocks so the lengthwise droop is followed too. Slabs are thickened DOWNWARD only, so the top
   // channel (the cup) is preserved.
-  const int   S    = 3;
+  const int   S    = 4;                          // length blocks (more = smoother bowl)
   const float th   = length * 0.08f + 0.03f;     // collision-only downward thickness (anti-tunnel)
   const math::vec3f down(0.0f, -th, 0.0f);
 
