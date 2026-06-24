@@ -86,13 +86,13 @@
         (function () {
             // key must match the names read in world.cpp refresh_live_tuning()
             var PARAMS = [
-                { key: 'metaballRadius', label: 'metaball radius', min: 0.02, max: 0.20, step: 0.002, def: 0.074, cpp: 'DROPLET_RAYMARCH_PARTICLE_RADIUS' },
-                { key: 'influence',      label: 'influence (merge)', min: 0.02, max: 0.30, step: 0.005, def: 0.11, cpp: 'DROPLET_INFLUENCE_RADIUS' },
+                { key: 'metaballRadius', label: 'metaball radius', min: 0.02, max: 0.20, step: 0.002, def: 0.050, cpp: 'DROPLET_RAYMARCH_PARTICLE_RADIUS' },
+                { key: 'influence',      label: 'influence (merge)', min: 0.02, max: 0.30, step: 0.005, def: 0.075, cpp: 'DROPLET_INFLUENCE_RADIUS' },
                 { key: 'iso',            label: 'iso threshold', min: -0.06, max: 0.10, step: 0.005, def: -0.04, cpp: 'DROPLET_ISO_THRESHOLD' },
                 { key: 'force',          label: 'cohesion force', min: 0.08, max: 0.30, step: 0.005, def: 0.155, cpp: 'DROPLET_PARTICLE_FORCE' },
                 { key: 'damping',        label: 'damping', min: 0.0, max: 0.04, step: 0.002, def: 0.002, cpp: 'DROPLET_PARTICLE_DAMPING' },
                 { key: 'particlesPerDroplet', label: 'particles / droplet', min: 13, max: 400, step: 1, def: 20, intVal: true, cpp: 'particles/droplet' },
-                { key: 'physicalRadius', label: 'physical radius', min: 0.02, max: 0.15, step: 0.005, def: 0.04, cpp: 'DROPLET_PARTICLE_RADIUS' }
+                { key: 'physicalRadius', label: 'physical radius', min: 0.015, max: 0.15, step: 0.002, def: 0.027, cpp: 'DROPLET_PARTICLE_RADIUS' }
             ];
 
             window.DROPLET = window.DROPLET || {};

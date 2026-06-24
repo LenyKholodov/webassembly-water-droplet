@@ -47,10 +47,10 @@ const float LIGHTS_MAX_RANGE = 50.f;
 const size_t MESHES_COUNT = 100;
 const float MESHES_POSITION_RADIUS = 3.f;
 const float DRAG_OFFSET_MULTIPLIER = 10.f;
-// framed for the tall (~18 m) procedural plant at the origin
-const math::vec3f CAM_POS_AR_16_9(40.f, 10.f, -1.f);
-const math::vec3f CAM_POS_AR_1_1(31.f, 9.f, -1.f);
-const math::vec3f CAM_POS_AR_9_16(35.f, 10.f, -1.f);
+// framed for the tall (~18 m) procedural plant rooted at the water surface (y ~ -6)
+const math::vec3f CAM_POS_AR_16_9(40.f, 4.f, -1.f);
+const math::vec3f CAM_POS_AR_1_1(31.f, 3.f, -1.f);
+const math::vec3f CAM_POS_AR_9_16(35.f, 4.f, -1.f);
 
 float frand()
 {

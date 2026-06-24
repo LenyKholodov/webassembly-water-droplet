@@ -238,8 +238,8 @@ LeafGeom leaf_geom(uint32_t seed, float length)
   float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));
   g.petL         = length * lerpf(0.04f, 0.09f, hashf(seed + 37u)); // shorter leg
   g.petR         = length * lerpf(0.004f, 0.007f, hashf(seed + 41u)); // thinner leg
-  float cup      = lerpf(0.32f, 0.55f, hashf(seed + 53u));               // deep side cupping
-  float bowl     = lerpf(0.12f, 0.22f, hashf(seed + 71u)) * length;      // lengthwise dip (boat)
+  float cup      = lerpf(0.22f, 0.385f, hashf(seed + 53u));              // side cupping (~30% shallower)
+  float bowl     = lerpf(0.084f, 0.154f, hashf(seed + 71u)) * length;    // lengthwise dip (boat, ~30% shallower)
   g.N = 10;
 
   g.C.resize(g.N + 1); g.L.resize(g.N + 1); g.R.resize(g.N + 1);

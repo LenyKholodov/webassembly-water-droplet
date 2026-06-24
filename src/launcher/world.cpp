@@ -30,7 +30,7 @@ const char* PLANT_MESH = "media/meshes/fern.obj";
 const size_t CLUSTERIZE_STEPS_COUNT = 3;
 const float CLUSTERIZE_STEP_FACTOR = 1.2;
 const size_t PREFERRED_MAX_DROPLETS_COUNT = 3;
-const float DROPLET_PARTICLE_RADIUS = 0.04f;
+const float DROPLET_PARTICLE_RADIUS = 0.027f;
 const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
@@ -57,10 +57,10 @@ const float DROPLET_PLANT_GENERATION_HEIGHT = MIN_DROPLET_PARTICLE_HEIGHT + 0.5f
 // exact normals), reflecting the skybox cubemap + screen-space refraction. (The old convex-hull +
 // Loop-subdivision surface was removed.)
 const size_t MAX_DROPLET_RAYMARCH_PARTICLES = 64;                              // MUST match MAX_DROPLET_PARTICLES in droplet_fluid.glsl
-const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = 0.074f; // per-particle metaball sphere radius — the rendered sphere size (independent of the physical radius)
-const float  DROPLET_INFLUENCE_RADIUS = 0.11f;          // smooth-min blend k: bigger -> spheres merge into one coherent blob
+const float  DROPLET_RAYMARCH_PARTICLE_RADIUS = 0.050f; // per-particle metaball sphere radius — the rendered sphere size (independent of the physical radius)
+const float  DROPLET_INFLUENCE_RADIUS = 0.075f;         // smooth-min blend k: bigger -> spheres merge into one coherent blob
 const float  DROPLET_ISO_THRESHOLD = -0.04f;            // surface iso level: inflate (+) / thin (-)
-const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.2f;                               // proxy-box slack so the iso-surface never clips the marched region
+const float  DROPLET_RAYMARCH_BOX_MARGIN = 1.08f;                              // proxy-box slack; tight so leaves occlude the droplet (box is depth-tested) without much overdraw
 // Droplet reflection source: true -> the static skybox cubemap (cheap, consistent, and skips the
 // per-droplet dynamic env-map render); false -> a per-droplet cubemap rendered from the cluster centre.
 const bool   DROPLET_REFLECT_SKYBOX = true;
@@ -69,8 +69,8 @@ const size_t MAX_PARTICLES_COUNT = 600;                                  // tota
 const math::vec3f LEAVES_SCALE(0.1f);
 const math::vec3f PLANT_SCALE(0.005f);
 const float LEAF_MASS = 1.0f;
-const float LEAF_MIN_FRICTION = DROPLET_PARTICLE_MIN_FRICTION;
-const float LEAF_MAX_FRICTION = DROPLET_PARTICLE_MIN_FRICTION * 1.5f;
+const float LEAF_MIN_FRICTION = 0.04f; // low -> water slides easily along the leaf
+const float LEAF_MAX_FRICTION = 0.12f;
 const math::vec3f STEAM_POSITION(0, 0, 0);
 const clock_t DEBUG_DUMP_INTERVAL = 5 * CLOCKS_PER_SEC;
 const clock_t PLAY_CONTACT_SOUND_IF_NO_CONTACTS_DURING = CLOCKS_PER_SEC / 2;
@@ -1214,7 +1214,10 @@ struct World::Impl: RigidBodyWorldCommonData
   // One growing plant at the scene centre, sprouting from g=0 (see update_plants for the growth).
   void spawn_initial_plant()
   {
-    generate_plant(STEAM_POSITION);
+    // root the plant AT the water surface so it emerges from the water and its mirror reflection
+    // meets it at the waterline (previously the plant floated ~6 units above the water -> detached
+    // reflection that read as a broken mirror).
+    generate_plant(math::vec3f(STEAM_POSITION.x, WATER_LEVEL, STEAM_POSITION.z));
 
 #if PLANT_DEBUG_FULLGROWN
     {
