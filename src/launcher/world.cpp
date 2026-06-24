@@ -118,10 +118,10 @@ const float  LEAF_GROW_MIN_SECONDS = 1.5f;  // a leaf unfurls over this..max sec
 const float  LEAF_GROW_MAX_SECONDS = 4.5f;
 const float  DROPLET_SPAWN_ABOVE_LEAF = 0.4f; // spawn the droplet a little above the chosen top leaf
 // branch-skeleton spring joints (tune live): stiffness scales with branch thickness
-const float  JOINT_STIFFNESS_BASE = 1600.0f; // torque per radian, * (radius + 0.02); live via window.WIND.stiffness
+const float  JOINT_STIFFNESS_BASE = 1000.0f; // * (mass^2 + eps) per joint; live via window.WIND.stiffness
 const float  JOINT_DAMPING        = 0.7f;    // 0..1 spring damping; live via window.WIND.damping
-const float  JOINT_ANGLE_LIMIT    = 0.95f;   // max bend per joint (radians)
-const float  WIND_ACCEL           = 9.0f;    // wind acceleration on the branch bones; live via window.WIND.accel
+const float  JOINT_ANGLE_LIMIT    = 0.9f;    // max bend per joint (radians)
+const float  WIND_ACCEL           = 10.0f;   // wind acceleration on the branch bones; live via window.WIND.accel
 
 const float WATER_SURFACE_SIZE = GROUND_SIZE * 5.0f; // a sea reaching the horizon (matches the platform extent)
 const float WATER_LEVEL = GROUND_OFFSET + 1.0f;      // water sits ABOVE the platform, so the platform is submerged under it
@@ -287,7 +287,8 @@ struct BoneBody
   std::shared_ptr<btRigidBody>          body;
   std::shared_ptr<btTypedConstraint>    joint; // 6-DOF spring to the parent bone (null for the root)
   int   parent = -1;
-  float radius_world = 0.1f; // branch radius in world units (drives per-bone joint stiffness)
+  float radius_world = 0.1f; // branch radius in world units
+  float mass = 0.0f;         // body mass; joint stiffness scales with mass^2 (structural joints >> twig joints)
   std::vector<media::geometry::Vertex>           verts;   // bone-local, scaled to world units
   std::vector<media::geometry::Mesh::index_type> indices;
 };
@@ -1470,6 +1471,7 @@ struct World::Impl: RigidBodyWorldCommonData
       }
 
       bb.radius_world = src.radius * s;
+      bb.mass         = mass;
 
       btRigidBody::btRigidBodyConstructionInfo ci(mass, bb.motion.get(), hull, inertia);
       bb.body = std::make_shared<btRigidBody>(ci);
@@ -1500,7 +1502,7 @@ struct World::Impl: RigidBodyWorldCommonData
         float lim = JOINT_ANGLE_LIMIT;
         spring->setAngularLowerLimit(btVector3(-lim, -lim, -lim));
         spring->setAngularUpperLimit(btVector3( lim,  lim,  lim));
-        float k = live.joint_stiffness * (bb.radius_world + 0.02f); // thicker branches -> stiffer
+        float k = joint_stiffness_for(bb); // mass^2-scaled: structural joints >> twig joints
         for (int a = 3; a < 6; a++)
         {
           spring->enableSpring(a, true);
@@ -1594,14 +1596,20 @@ struct World::Impl: RigidBodyWorldCommonData
     plant->mesh->set_mesh(mesh);
   }
 
-  // Push the branch skeleton with time-varying wind so the tree sways (gusts = sum of sines; a fixed
-  // acceleration per bone -> the stiffness gradient makes twigs sway more than the trunk).
+  // Joint spring stiffness for a bone: scales with mass^2 so a thick structural joint (carrying a big
+  // subtree) is ~1000x stiffer than a twig joint, instead of the ~10x a radius term gives. That keeps
+  // the trunk/main limbs from folding under wind while leaving the twigs springy. Tuned live.
+  float joint_stiffness_for(const BoneBody& bb) const
+  {
+    return live.joint_stiffness * (bb.mass * bb.mass + 0.0008f);
+  }
+
+  // Push the branch skeleton with OSCILLATING wind so the tree sways back and forth (rather than a
+  // one-way shove that folds it downwind). drive swings through zero; a per-bone phase desyncs branches.
   void apply_wind(const std::shared_ptr<Plant>& plant)
   {
     float t = wind_time;
-    // steady breeze + slow swell + faster gust -> always blowing, never fully stalls
-    float gust = 0.9f + 0.5f * std::sin(t * 0.6f) + 0.3f * std::sin(t * 1.7f + 1.3f);
-    if (gust < 0.15f) gust = 0.15f;
+    float swell = 0.7f + 0.3f * std::sin(t * 0.30f); // slow breeze envelope (always positive)
     math::vec3f dir = math::normalize(math::vec3f(1.0f, 0.0f, 0.35f));
 
     for (size_t b = 0; b < plant->bones.size(); b++)
@@ -1609,9 +1617,11 @@ struct World::Impl: RigidBodyWorldCommonData
       BoneBody& bb = plant->bones[b];
       if (bb.parent < 0 || bb.body->getInvMass() <= 0.0f)
         continue;
-      float m  = 1.0f / bb.body->getInvMass();
-      float ph = 0.7f + 0.3f * std::sin(t * 1.1f + (float) b * 0.7f);
-      math::vec3f f = dir * (m * live.wind_accel * gust * ph);
+      float m    = 1.0f / bb.body->getInvMass();
+      float ph   = (float) b * 0.7f;
+      float sway = std::sin(t * 1.6f + ph) + 0.4f * std::sin(t * 3.3f + ph * 1.7f);
+      float drive = swell * (0.30f + 0.9f * sway); // oscillates ± -> sway, with a slight downwind bias
+      math::vec3f f = dir * (m * live.wind_accel * drive);
       bb.body->applyCentralForce(btVector3(f.x, f.y, f.z));
       bb.body->activate(true);
     }
@@ -1627,7 +1637,7 @@ struct World::Impl: RigidBodyWorldCommonData
       btGeneric6DofSpringConstraint* spring = dynamic_cast<btGeneric6DofSpringConstraint*>(bb.joint.get());
       if (!spring)
         continue;
-      float k = live.joint_stiffness * (bb.radius_world + 0.02f);
+      float k = joint_stiffness_for(bb);
       for (int a = 3; a < 6; a++)
       {
         spring->setStiffness(a, k);

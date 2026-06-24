@@ -102,8 +102,8 @@
 
             // wind / branch-skeleton knobs (read every frame by world.cpp via window.WIND)
             var WIND_PARAMS = [
-                { key: 'accel',     label: 'wind strength', min: 0, max: 40, step: 0.5, def: 9.0, cpp: 'WIND_ACCEL' },
-                { key: 'stiffness', label: 'branch stiffness', min: 100, max: 6000, step: 50, def: 1600, cpp: 'JOINT_STIFFNESS_BASE' },
+                { key: 'accel',     label: 'wind strength', min: 0, max: 50, step: 0.5, def: 10.0, cpp: 'WIND_ACCEL' },
+                { key: 'stiffness', label: 'branch stiffness', min: 100, max: 8000, step: 50, def: 1000, cpp: 'JOINT_STIFFNESS_BASE' },
                 { key: 'damping',   label: 'branch damping', min: 0.0, max: 1.0, step: 0.02, def: 0.7, cpp: 'JOINT_DAMPING' }
             ];
             window.WIND = window.WIND || {};
