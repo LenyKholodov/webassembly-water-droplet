@@ -35,8 +35,13 @@ const float DROPLET_PARTICLE_MASS = 0.002f;
 const float DROPLET_RADIUS = DROPLET_PARTICLE_RADIUS * 20.0f;
 const bool DROPLET_DEBUG_DRAW = false;
 const float DROPLET_PARTICLE_FORCE_DISTANCE = DROPLET_RADIUS;
-const float DROPLET_PARTICLE_FORCE = 0.095f;   // centroid spring (tuned live); keep >~0.08 or droplets are too loose and slip THROUGH the leaf's thin static-mesh collider
-const float DROPLET_PARTICLE_DAMPING = 0.002f; // velocity damping (tuned)
+// Surface tension is modelled as SPH-style PAIRWISE cohesion between neighbouring particles (Akinci et
+// al. 2013), NOT a spring to the cluster centroid. Each near pair attracts with a kernel that vanishes
+// at contact and at the cohesion radius and peaks in between -> the blob minimises its surface area and
+// holds together (necking/merging) without imploding toward a point.
+const float DROPLET_SURFACE_TENSION = 1.0f;    // pairwise cohesion accel (gamma); live via window.DROPLET.force
+const float DROPLET_VISCOSITY       = 1.0f;    // pairwise relative-velocity damping rate (settles internal jiggle, keeps the fall); live via window.DROPLET.damping
+const float DROPLET_COHESION_RADIUS = 0.11f;   // neighbour range h (~4x particle radius); live via window.DROPLET.cohesionRadius
 const float DROPLET_PARTICLE_MIN_INTERACTION_RADIUS = DROPLET_PARTICLE_RADIUS * 4.0f;
 const float COLLISION_MARGIN = 0.001f;
 const float DROPLET_PARTICLE_MIN_FRICTION = 0.35;
@@ -324,8 +329,9 @@ struct LiveTuning
   float metaball_radius = DROPLET_RAYMARCH_PARTICLE_RADIUS;
   float influence       = DROPLET_INFLUENCE_RADIUS;
   float iso             = DROPLET_ISO_THRESHOLD;
-  float force           = DROPLET_PARTICLE_FORCE;
-  float damping         = DROPLET_PARTICLE_DAMPING;
+  float force           = DROPLET_SURFACE_TENSION; // pairwise cohesion strength (gamma)
+  float damping         = DROPLET_VISCOSITY;       // pairwise viscosity
+  float cohesion_radius = DROPLET_COHESION_RADIUS; // neighbour range h
   int   particles_per_droplet = 20; // physics particles spawned per droplet (~1.5x fewer)
   float physical_radius = DROPLET_PARTICLE_RADIUS;                                       // Bullet collision sphere radius (+ drives clustering/cohesion radii)
   // branch-skeleton knobs (window.WIND.* sliders)
@@ -614,6 +620,7 @@ struct World::Impl: RigidBodyWorldCommonData
   std::vector<Leaf> leaves;
   std::vector<std::shared_ptr<PhysBodySync>> droplet_particles;
   std::vector<std::shared_ptr<Droplet>> droplets;
+  std::vector<btVector3> st_pos, st_vel, st_acc; // reused scratch for pairwise surface-tension (no per-frame alloc)
   Material droplet_material;
   Material droplet_fluid_material;
   Material sky_material;
@@ -1751,14 +1758,81 @@ struct World::Impl: RigidBodyWorldCommonData
     live.metaball_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.metaballRadius != null) ? window.DROPLET.metaballRadius : $0; }, (double) DROPLET_RAYMARCH_PARTICLE_RADIUS);
     live.influence       = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.influence      != null) ? window.DROPLET.influence      : $0; }, (double) DROPLET_INFLUENCE_RADIUS);
     live.iso             = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.iso            != null) ? window.DROPLET.iso            : $0; }, (double) DROPLET_ISO_THRESHOLD);
-    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_PARTICLE_FORCE);
-    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_PARTICLE_DAMPING);
+    live.force           = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.force          != null) ? window.DROPLET.force          : $0; }, (double) DROPLET_SURFACE_TENSION);
+    live.damping         = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.damping        != null) ? window.DROPLET.damping        : $0; }, (double) DROPLET_VISCOSITY);
+    live.cohesion_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.cohesionRadius != null) ? window.DROPLET.cohesionRadius : $0; }, (double) DROPLET_COHESION_RADIUS);
     live.particles_per_droplet = EM_ASM_INT({ return (window.DROPLET && window.DROPLET.particlesPerDroplet != null) ? (window.DROPLET.particlesPerDroplet | 0) : $0; }, 20);
     live.physical_radius = (float) EM_ASM_DOUBLE({ return (window.DROPLET && window.DROPLET.physicalRadius  != null) ? window.DROPLET.physicalRadius  : $0; }, (double) DROPLET_PARTICLE_RADIUS);
     live.wind_accel      = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.accel      != null) ? window.WIND.accel      : $0; }, (double) WIND_ACCEL);
     live.joint_stiffness = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.stiffness  != null) ? window.WIND.stiffness  : $0; }, (double) JOINT_STIFFNESS_BASE);
     live.joint_damping   = (float) EM_ASM_DOUBLE({ return (window.WIND && window.WIND.damping    != null) ? window.WIND.damping    : $0; }, (double) JOINT_DAMPING);
 #endif
+  }
+
+  // SPH-style surface tension (Akinci et al. 2013): for every near pair of particles within a droplet,
+  // a COHESION force pulls them together with a kernel that is zero at contact and at the cohesion
+  // radius h and peaks in between (so the cluster minimises surface area without imploding), plus a
+  // VISCOSITY force that damps only their RELATIVE velocity (internal jiggle settles, bulk fall kept).
+  // Bullet's sphere collisions provide the short-range repulsion. O(n^2) per cluster; clustering keeps
+  // n modest and the particle budget caps the worst case.
+  void apply_droplet_surface_tension()
+  {
+    const float h = live.cohesion_radius;
+    if (h <= 1.0e-4f)
+      return;
+    const float h2    = h * h;
+    const float gamma = live.force;   // cohesion strength (surface tension)
+    const float visc  = live.damping; // relative-velocity damping
+
+    for (std::shared_ptr<Droplet>& droplet : droplets)
+    {
+      std::vector<std::shared_ptr<PhysBodySync>>& b = droplet->bodies;
+      const size_t n = b.size();
+      if (n < 2)
+        continue;
+
+      st_pos.clear(); st_vel.clear();
+      st_pos.reserve(n); st_vel.reserve(n);
+      st_acc.assign(n, btVector3(0.0f, 0.0f, 0.0f));
+      for (size_t i = 0; i < n; i++)
+      {
+        st_pos.push_back(b[i]->body->getWorldTransform().getOrigin());
+        st_vel.push_back(b[i]->body->getLinearVelocity());
+      }
+
+      // each unordered pair once (j>i); the pair's accel is equal-and-opposite (equal masses), so apply
+      // +to i and -to j -> half the work of the naive i!=j double loop, same result.
+      for (size_t i = 0; i < n; i++)
+      {
+        const btVector3& pi = st_pos[i];
+        const btVector3& vi = st_vel[i];
+        for (size_t j = i + 1; j < n; j++)
+        {
+          btVector3 d  = pi - st_pos[j];
+          float     r2 = d.length2();
+          if (r2 >= h2 || r2 < 1.0e-10f)
+            continue;
+          float r   = std::sqrt(r2);
+          float x   = r / h;                    // 0..1
+          float w   = 4.0f * x * (1.0f - x);    // cohesion kernel: 0 at contact & at h, peak mid
+          btVector3 dir = d / r;                // from j to i
+          btVector3 ai  = dir * (-gamma * w)              // cohesion: pull i toward j
+                        + (st_vel[j] - vi) * (visc * w);  // viscosity: match neighbour velocity
+          st_acc[i] += ai;
+          st_acc[j] -= ai;                      // Newton's 3rd law (equal masses)
+        }
+      }
+
+      // st_acc is an ACCELERATION; multiply by the particle mass so the tiny mass (0.002) doesn't blow
+      // it up. gamma/visc therefore read as accelerations, independent of the mass value.
+      for (size_t i = 0; i < n; i++)
+      {
+        float inv_m = b[i]->body->getInvMass();
+        float m     = inv_m > 0.0f ? 1.0f / inv_m : DROPLET_PARTICLE_MASS;
+        b[i]->body->applyCentralForce(st_acc[i] * m);
+        b[i]->body->activate(true);
+      }
+    }
   }
 
   // Metaball-raymarch surface update for one droplet: position+scale the proxy box to enclose the
@@ -2125,48 +2199,15 @@ struct World::Impl: RigidBodyWorldCommonData
     for (std::shared_ptr<Droplet>& droplet : droplets)
       update_droplet_raymarch(droplet);
 
-    //apply sd to droplets
+    //surface tension: SPH-style PAIRWISE cohesion + viscosity between neighbouring particles within
+    //each droplet (Akinci et al. 2013). Cohesion attracts near pairs with a kernel that is 0 at contact
+    //and at the cohesion radius h and peaks in between -> the blob minimises surface area and holds
+    //together (necking/merging) WITHOUT collapsing toward a point (the old centroid spring did the
+    //latter, which read as wrong). Viscosity damps only the RELATIVE velocity of neighbours, so internal
+    //jiggle settles while the droplet's bulk fall is preserved. Bullet's sphere collisions supply the
+    //short-range repulsion, so equilibrium spacing sits near contact.
 
-    for (std::shared_ptr<Droplet>& droplet : droplets)
-    {
-      for (std::shared_ptr<PhysBodySync>& particle : droplet->bodies)
-      {
-        btVector3 bt_position = particle->body->getWorldTransform().getOrigin();
-        btVector3 bt_velocity = particle->body->getLinearVelocity();
-        math::vec3f position(bt_position.getX(), bt_position.getY(), bt_position.getZ());
-        math::vec3f velocity(bt_velocity.getX(), bt_velocity.getY(), bt_velocity.getZ());
-
-        //static const float TIME_STEP = 1.0f / 60.0f;
-
-        math::vec3f to_center = droplet->center - position;
-        float distance = length(to_center);
-
-        //pull toward the centroid (no upper gate, so spread stragglers get reclaimed instead of abandoned),
-        //with velocity damping so the spring settles into a blob instead of oscillating
-        if (distance > live.physical_radius * 4.0f) // was DROPLET_PARTICLE_MIN_INTERACTION_RADIUS (= physical * 4)
-        {
-          math::vec3f force = to_center * live.force - velocity * live.damping;
-          particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-        }
-
-        //static const float VELOCITY_BRAKE_FACTOR = 0.0001f;
-
-        //math::vec3f velocity_brake = -velocity * VELOCITY_BRAKE_FACTOR;
-
-        //particle->body->applyCentralForce(btVector3(velocity_brake[0], velocity_brake[1], velocity_brake[2]));
-
-        /*/ math::vec3f dir = droplet->center - position;
-
-        if (length(dir) < DROPLET_PARTICLE_FORCE_DISTANCE)
-        {
-          static const float DROPLET_PARTICLE_FORCE = .003f;
-          //math::vec3f force = position * DROPLET_PARTICLE_FORCE / particle->body->getInvMass() / TIME_STEP;
-          math::vec3f force = dir * DROPLET_PARTICLE_FORCE;
-
-          particle->body->applyCentralForce(btVector3(force[0], force[1], force[2]));
-        }*/
-      }
-    }
+    apply_droplet_surface_tension();
 
       //sync bodies with scene
 
