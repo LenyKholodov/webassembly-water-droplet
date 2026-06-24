@@ -89,7 +89,9 @@ struct Ctx
   const PlantParams*     p;
   float                  g;
   Builder*               bld   = nullptr;   // set on the mesh pass
-  std::vector<LeafSlot>* slots = nullptr;   // set on the collect pass
+  std::vector<LeafSlot>* slots = nullptr;   // set on the leaf-collect pass
+  std::vector<Bone>*     bones = nullptr;   // set on the bone-collect pass
+  int                    cur_bone = -1;     // parent bone index for the current recursion (bone pass)
   int                    branch_count = 0;
 };
 
@@ -104,7 +106,8 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
   float span    = SPAN[depth < 5 ? depth : 4] * lerpf(0.65f, 1.45f, hashf(id + 777u)); // per-branch growth speed (diversity)
   float mature  = birth + span; if (mature > 1.0f) mature = 1.0f;  // fully extended by g=1 at the latest
   bool  collect = cx.slots != nullptr;
-  float local   = collect ? 1.0f : smoothstepf(birth, mature, cx.g);
+  bool  full    = collect || cx.bones != nullptr;     // leaf/bone passes use the fully-grown plant
+  float local   = full ? 1.0f : smoothstepf(birth, mature, cx.g);
   if (local <= 0.0f) return;                          // not yet sprouted (mesh pass)
   cx.branch_count++;
 
@@ -161,6 +164,46 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
       }
   }
 
+  // bone (skeleton pass): this branch's tube as ONE bone, geometry stored relative to its base P0
+  int my_bone = cx.cur_bone;
+  if (cx.bones)
+  {
+    Bone bone;
+    bone.rest_base = P0;
+    bone.rest_tip  = cpos[rings];
+    bone.radius    = r0;
+    bone.parent    = cx.cur_bone;
+    for (int i = 0; i <= rings; ++i)
+    {
+      float t = (float) i / (float) rings;
+      math::vec3f rn, rb;
+      frame(cdir[i], rn, rb);
+      float r = r0 * lerpf(1.0f, 0.32f, t);
+      math::vec3f col = mix3(cx.p->stem_base, cx.p->stem_tip, clampf(depth_f + t * 0.4f, 0.0f, 1.0f));
+      for (int j = 0; j < sides; ++j)
+      {
+        float a = TWO_PI * (float) j / (float) sides;
+        math::vec3f dirr = rn * std::cos(a) + rb * std::sin(a);
+        Vertex v;
+        v.position  = (cpos[i] - P0) + dirr * r;   // bone-local (relative to the joint at P0)
+        v.normal    = dirr;
+        v.color     = math::vec4f(col.x, col.y, col.z, 1.0f);
+        v.tex_coord = math::vec2f(0.0f, 0.0f);
+        bone.verts.push_back(v);
+      }
+    }
+    for (int i = 0; i < rings; ++i)
+      for (int j = 0; j < sides; ++j)
+      {
+        int j2 = (j + 1) % sides;
+        uint32_t a = i * sides + j, b = i * sides + j2, c = (i + 1) * sides + j2, d = (i + 1) * sides + j;
+        bone.indices.push_back((Mesh::index_type) a); bone.indices.push_back((Mesh::index_type) b); bone.indices.push_back((Mesh::index_type) c);
+        bone.indices.push_back((Mesh::index_type) a); bone.indices.push_back((Mesh::index_type) c); bone.indices.push_back((Mesh::index_type) d);
+      }
+    my_bone = (int) cx.bones->size();
+    cx.bones->push_back(std::move(bone));
+  }
+
   // leaf slots (collect pass only): along the upper portion of branches beyond the trunk
   if (collect && depth >= 1 && (int) cx.slots->size() < MAX_SLOTS)
   {
@@ -190,6 +233,8 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
   // children sprout from the now-full-length branch, progressively (each at a slightly randomised g)
   if (depth < cx.p->max_depth)
   {
+    int saved_bone = cx.cur_bone;
+    cx.cur_bone = my_bone;                            // children's parent bone = this branch
     int nchild = 2 + (hashf(id + 31u) > 0.45f ? 1 : 0) + (hashf(id + 37u) > 0.82f ? 1 : 0);
     for (int c = 0; c < nchild; ++c)
     {
@@ -212,6 +257,7 @@ void build_branch(Ctx& cx, const math::vec3f& P0, const math::vec3f& dir, float 
       float cR = r0 * lerpf(0.55f, 0.70f, hashf(cid + 29u));
       build_branch(cx, atp, cdirc, cL, cR, depth + 1, child_birth, cid);
     }
+    cx.cur_bone = saved_bone;
   }
 }
 
@@ -290,6 +336,13 @@ void generate_plant_mesh(Mesh& out, const PlantParams& p, float g, const char* m
   out.add_primitive(material, PrimitiveType_TriangleList,
                     &bld.verts[0], (Mesh::index_type) bld.verts.size(),
                     &bld.indices[0], (uint32_t) bld.indices.size());
+}
+
+void collect_bones(const PlantParams& p, std::vector<Bone>& out)
+{
+  out.clear();
+  Ctx cx; cx.p = &p; cx.g = 1.0f; cx.bones = &out; cx.cur_bone = -1;
+  build_branch(cx, math::vec3f(0, 0, 0), trunk_dir(p), p.target_height, p.trunk_radius, 0, 0.0f, p.seed | 1u);
 }
 
 void generate_leaf(Mesh& out, uint32_t seed, float length, const char* material)

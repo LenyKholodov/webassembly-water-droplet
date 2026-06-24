@@ -61,6 +61,23 @@ void generate_plant_mesh(engine::media::geometry::Mesh& out, const PlantParams& 
 // Collect every leaf attachment slot for the mature plant (each carries its own birth_g).
 void collect_leaf_slots(const PlantParams& p, std::vector<LeafSlot>& out);
 
+// One branch as a SKELETON bone: its tube geometry (in bone-local space, relative to rest_base, no
+// rotation at rest) + the rest endpoints + parent bone index. The host (world.cpp) makes a rigid body
+// per bone, joints it to its parent, and re-poses the verts by the body transform each frame so the
+// branch mesh follows the physics skeleton (drag/wind). parent = -1 for the trunk (the fixed root).
+struct Bone
+{
+  math::vec3f rest_base;   // branch base / joint point, plant-local
+  math::vec3f rest_tip;    // branch tip, plant-local
+  float       radius = 0.1f;
+  int         parent = -1;
+  std::vector<engine::media::geometry::Vertex>           verts;   // positions relative to rest_base
+  std::vector<engine::media::geometry::Mesh::index_type> indices; // 0-based within this bone
+};
+
+// Collect the mature plant as a bone skeleton (one bone per branch). Order is parent-before-child.
+void collect_bones(const PlantParams& p, std::vector<Bone>& out);
+
 // Generate ONE procedural leaf (a petiole "leg" + a textured blade), seeded for shape diversity.
 // Built in leaf-local space: the leg base is at the origin (the branch attachment), the leaf extends
 // along +X (tip), the blade normal is +Y, width along Z. `length` is the blade length in world units.

@@ -270,6 +270,18 @@ struct Leaf
     {}
 };
 
+// One branch as a physics-skeleton bone: a rigid body whose transform poses the branch's tube each
+// frame (the branch mesh is rebuilt by transforming each bone's local verts by its body transform).
+struct BoneBody
+{
+  std::shared_ptr<btCollisionShape>     shape;
+  std::shared_ptr<btDefaultMotionState> motion;
+  std::shared_ptr<btRigidBody>          body;
+  int parent = -1;
+  std::vector<media::geometry::Vertex>           verts;   // bone-local, scaled to world units
+  std::vector<media::geometry::Mesh::index_type> indices;
+};
+
 struct Plant
 {
   scene::Mesh::Pointer mesh;
@@ -283,6 +295,9 @@ struct Plant
   float built_growth = -1.0f;  // g the current mesh was built at (rebuild throttle)
   std::vector<launcher::LeafSlot> slots; // leaf attachment slots (local space), each with a birth_g
   std::vector<char> slot_spawned;        // whether a physics leaf has been spawned for each slot
+  // physics skeleton (built once the plant is fully grown; the branch mesh then follows it)
+  bool skeletonized = false;
+  std::vector<BoneBody> bones;
 };
 
 struct PlantLight
@@ -1387,17 +1402,118 @@ struct World::Impl: RigidBodyWorldCommonData
     plant->built_growth = plant->growth;
   }
 
+  // Once the plant is fully grown, build a PHYSICS SKELETON: one kinematic rigid body per branch, baked
+  // into world space. From here the branch mesh follows the bodies (rebuild_skeleton_mesh). Phase 1 keeps
+  // the bodies kinematic at rest -> renders identically; later phases make them dynamic + jointed (wind/drag).
+  void finalize_skeleton(const std::shared_ptr<Plant>& plant)
+  {
+    std::vector<launcher::Bone> bones;
+    launcher::collect_bones(plant->params, bones);
+
+    const float s = plant->scale;
+    const math::vec3f base = plant->base_position;
+
+    plant->bones.clear();
+    plant->bones.reserve(bones.size());
+
+    for (size_t i = 0; i < bones.size(); i++)
+    {
+      const launcher::Bone& src = bones[i];
+
+      BoneBody bb;
+      bb.parent  = src.parent;
+      bb.indices = src.indices;
+      bb.verts   = src.verts;
+      for (size_t v = 0; v < bb.verts.size(); v++)
+        bb.verts[v].position = bb.verts[v].position * s;     // bone-local, scaled to world units
+
+      math::vec3f origin_world = base + src.rest_base * s;    // bone origin = the joint to its parent
+
+      btConvexHullShape* hull = new btConvexHullShape();
+      for (size_t v = 0; v < bb.verts.size(); v++)
+        hull->addPoint(btVector3(bb.verts[v].position.x, bb.verts[v].position.y, bb.verts[v].position.z), false);
+      hull->recalcLocalAabb();
+      bb.shape = std::shared_ptr<btCollisionShape>(hull);
+
+      btTransform t;
+      t.setIdentity();
+      t.setOrigin(btVector3(origin_world.x, origin_world.y, origin_world.z));
+      bb.motion = std::make_shared<btDefaultMotionState>(t);
+
+      btRigidBody::btRigidBodyConstructionInfo ci(0.0f, bb.motion.get(), hull, btVector3(0, 0, 0));
+      bb.body = std::make_shared<btRigidBody>(ci);
+      bb.body->setCollisionFlags(bb.body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+      bb.body->setActivationState(DISABLE_DEACTIVATION);
+      dynamics_world->addRigidBody(bb.body.get(), COLLISION_GROUP_LEAF, 0); // mask 0: drives the mesh only, collides with nothing (yet)
+
+      plant->bones.push_back(bb);
+    }
+
+    plant->skeletonized = true;
+    plant->mesh->set_position(math::vec3f(0.0f)); // the rebuilt skeleton mesh is already in world space
+    plant->mesh->set_scale(math::vec3f(1.0f));
+    rebuild_skeleton_mesh(plant);
+  }
+
+  // Rebuild the branch mesh from the live bone-body transforms (the skeleton drives the geometry).
+  void rebuild_skeleton_mesh(const std::shared_ptr<Plant>& plant)
+  {
+    std::vector<media::geometry::Vertex>           verts;
+    std::vector<media::geometry::Mesh::index_type> indices;
+
+    for (size_t b = 0; b < plant->bones.size(); b++)
+    {
+      const BoneBody& bb = plant->bones[b];
+      if (verts.size() + bb.verts.size() > 64000)
+        break; // uint16 index budget
+
+      const btTransform& T = bb.body->getWorldTransform();
+      const btMatrix3x3& R = T.getBasis();
+      const btVector3&   O = T.getOrigin();
+      uint32_t base_idx = (uint32_t) verts.size();
+
+      for (size_t v = 0; v < bb.verts.size(); v++)
+      {
+        const math::vec3f& lp = bb.verts[v].position;
+        const math::vec3f& ln = bb.verts[v].normal;
+        btVector3 wp = T * btVector3(lp.x, lp.y, lp.z);
+        btVector3 wn = R * btVector3(ln.x, ln.y, ln.z);
+        media::geometry::Vertex o = bb.verts[v];
+        o.position = math::vec3f(wp.x(), wp.y(), wp.z());
+        o.normal   = math::vec3f(wn.x(), wn.y(), wn.z());
+        verts.push_back(o);
+      }
+      (void) O;
+      for (size_t k = 0; k < bb.indices.size(); k++)
+        indices.push_back((media::geometry::Mesh::index_type) (base_idx + bb.indices[k]));
+    }
+
+    if (verts.empty())
+      return;
+
+    media::geometry::Mesh mesh;
+    mesh.add_primitive("flower", media::geometry::PrimitiveType_TriangleList,
+      &verts[0], (media::geometry::Mesh::index_type) verts.size(), &indices[0], (uint32_t) indices.size());
+    plant->mesh->set_mesh(mesh);
+  }
+
   // Advance every still-growing plant by dt; re-mesh when growth moved enough (called each frame).
   void update_plants(float dt)
   {
     for (auto& plant : plants)
     {
-      if (plant->growth < 1.0f)
+      if (!plant->skeletonized)
       {
-        plant->age   += dt;
-        plant->growth = std::min(1.0f, plant->age / PLANT_GROW_SECONDS);
-
-        rebuild_plant(plant); // rebuild every frame while growing -> smooth, continuous growth
+        if (plant->growth < 1.0f)
+        {
+          plant->age   += dt;
+          plant->growth = std::min(1.0f, plant->age / PLANT_GROW_SECONDS);
+          rebuild_plant(plant); // rebuild every frame while growing -> smooth, continuous growth
+        }
+      }
+      else
+      {
+        rebuild_skeleton_mesh(plant); // branch mesh follows the physics skeleton
       }
 
         //spawn a real leaf-blade physics body for each slot whose birth has been reached
@@ -1419,6 +1535,10 @@ struct World::Impl: RigidBodyWorldCommonData
         spawn_leaf(wpos, leaf_orientation(slot.dir), world_len, slot.seed);
         plant->slot_spawned[i] = 1;
       }
+
+        //fully grown -> build the physics skeleton (after all leaves have spawned)
+      if (!plant->skeletonized && plant->growth >= 1.0f)
+        finalize_skeleton(plant);
     }
   }
 
