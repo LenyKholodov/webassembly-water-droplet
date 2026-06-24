@@ -236,8 +236,8 @@ LeafGeom leaf_geom(uint32_t seed, float length)
   float halfW    = length * lerpf(0.18f, 0.34f, hashf(seed * 2654435761u + 1u));
   float skew     = lerpf(0.80f, 1.30f, hashf(seed + 11u));
   float tipSharp = lerpf(1.10f, 1.90f, hashf(seed + 23u));
-  g.petL         = length * lerpf(0.07f, 0.14f, hashf(seed + 37u));
-  g.petR         = length * lerpf(0.006f, 0.010f, hashf(seed + 41u));
+  g.petL         = length * lerpf(0.04f, 0.09f, hashf(seed + 37u)); // shorter leg
+  g.petR         = length * lerpf(0.004f, 0.007f, hashf(seed + 41u)); // thinner leg
   float cup      = lerpf(0.14f, 0.34f, hashf(seed + 53u));
   float droop    = lerpf(-0.02f, 0.14f, hashf(seed + 71u)) * length;
   g.N = 10;
@@ -248,8 +248,11 @@ LeafGeom leaf_geom(uint32_t seed, float length)
     float t    = (float) i / (float) g.N;
     float x    = g.petL + t * length;
     float ymid = -droop * t * t;                                   // tip droops down
-    float hw   = halfW * std::pow(std::sin(PI * std::pow(t, skew)), tipSharp);
-    if (hw < 0.0f) hw = 0.0f;
+    // clamp sin >= 0 BEFORE pow: at the tip sin(PI) is a tiny negative float and pow(neg, frac) = NaN,
+    // which made the leaf tip vertex (and so the centroid + droplet spawn) NaN.
+    float sv   = std::sin(PI * std::pow(t, skew));
+    if (sv < 0.0f) sv = 0.0f;
+    float hw   = halfW * std::pow(sv, tipSharp);
     float yedge = ymid + cup * hw;                                 // edges curl up (concave/cupped)
     g.C[i] = math::vec3f(x, ymid,  0.0f);
     g.L[i] = math::vec3f(x, yedge, +hw);
